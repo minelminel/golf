@@ -2,6 +2,7 @@ import React from "react";
 import { Container, Row, Col, Button } from "react-bootstrap";
 import { v4 as uuidv4 } from "uuid";
 import { ShoppingCart, Coffee, CloudRain, UserPlus, Mail } from "react-feather";
+// import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 
 import { Model } from "./model";
 
@@ -105,9 +106,9 @@ const Profile = () => {
                 whiteSpace: "nowrap",
               }}
             >
-              User Name
+              Alice
             </h3>
-            <span className="text-muted">@name</span>
+            <span className="text-muted">@{state.user.username}</span>
           </Col>
           {actionButtonsEnabled && (
             <Col>
@@ -126,7 +127,6 @@ const Profile = () => {
             <Container
               className="mt-4 shadow"
               style={{
-                border: "1px dashed purple",
                 borderRadius: "15px",
                 padding: "15px",
               }}
@@ -143,12 +143,11 @@ const Profile = () => {
                       justifyContent: "center",
                       alignItems: "center",
                       position: "absolute",
-                      transform: "translate(50%, -50%)",
+                      transform: "translate(60%, -60%)",
                       width: "5rem",
                       height: "5rem",
                       borderRadius: "50%",
-                      border: "2px solid purple",
-                      backgroundColor: "pink",
+                      backgroundColor: "var(--bs-gray-300)",
                       fontSize: "1.75rem",
                       fontWeight: "bold",
                     }}
@@ -215,7 +214,6 @@ const Profile = () => {
             <div
               className="mt-4 shadow"
               style={{
-                border: "1px dashed green",
                 borderRadius: "15px",
                 height: "100px",
                 backgroundImage:

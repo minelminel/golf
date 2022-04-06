@@ -13,10 +13,55 @@ Views:
 
 Components:
 
+- Notifications
+  - Toast
+- Navigation
+  - Links
+    - Feed
+    - Inbox
+  - Brand
+- Feed
+  - Links
+    - Account
+    - Calendar
+    - Network
+    - Search
+  - Timeline
+    - CardBox
+- Account
+  - My Profile
+    - Edit
+  - My Location
+    - Edit
+  - My Settings
+    - Edit
 - Calendar
+  - Availability
+- Search
+  - Query
+    - Distance
+  - Results
+    - CardBox
 - Inbox
+  - Preview
 - Chat
+  - Bubbles
+  - Input
 - Profile
-- ProfileCard
-- Settings
-- Timeline
+  - Image
+  - Name & @
+  - Summary
+    - Preferences
+    - Prompts
+    - Calendar
+  - Location
+
+---
+
+Interface
+
+```js
+props = {
+  notify: (e) => alert(e),
+};
+```

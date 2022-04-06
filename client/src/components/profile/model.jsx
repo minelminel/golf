@@ -6,14 +6,20 @@ export const Model = {
     weather: 2,
     prompts: [
       {
+        pk: 1,
+        fk: 1,
         q: "question 1",
         a: "some user provided answer to 1",
       },
       {
+        pk: 2,
+        fk: 1,
         q: "question 2",
         a: "an answer given for 2",
       },
       {
+        pk: 3,
+        fk: 1,
         q: "question 3",
         a: "my response to the third prompt",
       },

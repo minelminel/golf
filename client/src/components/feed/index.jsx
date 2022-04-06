@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { Container, Row, Col, Button, ListGroup } from "react-bootstrap";
 import { Calendar, Search, User, Grid, Share2 } from "react-feather";
 
-function Timeline() {
+function Feed() {
   return (
     <>
       <Container>
@@ -82,4 +82,4 @@ function Timeline() {
   );
 }
 
-export default Timeline;
+export default Feed;

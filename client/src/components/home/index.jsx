@@ -14,7 +14,7 @@ import {
   Spinner,
 } from "react-bootstrap";
 
-const Home = ({ ready, handleLoginOrRegister = () => {} }) => {
+const Home = ({ notify, ready, handleLoginOrRegister = () => {} }) => {
   const submit = (e) => {
     e.preventDefault();
     const source = e.target.id;
@@ -45,9 +45,13 @@ const Home = ({ ready, handleLoginOrRegister = () => {} }) => {
       .then((response) => response.json())
       .then((json) => {
         handleLoginOrRegister(json);
+      })
+      .catch((error) => {
+        console.error(error);
+        notify(`Server Unavailable`);
       });
-    console.log(source, payload);
   };
+
   return (
     <>
       <Container>
@@ -127,10 +131,10 @@ const Home = ({ ready, handleLoginOrRegister = () => {} }) => {
             >
               {/* REGISTER */}
               <Tab eventKey="register" title="Register" className="mt-4">
-                <p>Start finding players now!</p>
+                <p>Just a few questions!</p>
                 <Form onSubmit={submit} id="register">
                   <Form.Group>
-                    <InputGroup className="mb-3">
+                    <InputGroup className="mb-3 shadow">
                       <InputGroup.Text>@</InputGroup.Text>
                       <FormControl
                         placeholder="Username"
@@ -142,6 +146,7 @@ const Home = ({ ready, handleLoginOrRegister = () => {} }) => {
                   <Form.Group className="mb-3">
                     <Form.Label>Email address</Form.Label>
                     <Form.Control
+                      className="mb-2 shadow"
                       type="email"
                       placeholder="Enter email"
                       id="register.email"
@@ -152,9 +157,10 @@ const Home = ({ ready, handleLoginOrRegister = () => {} }) => {
                     </Form.Text>
                   </Form.Group>
 
-                  <Form.Group className="mb-3">
+                  <Form.Group className="mb-4">
                     <Form.Label>Password</Form.Label>
                     <Form.Control
+                      className="shadow"
                       type="password"
                       placeholder="Password"
                       id="register.password"
@@ -172,7 +178,7 @@ const Home = ({ ready, handleLoginOrRegister = () => {} }) => {
                 <p>Welcome back!</p>
                 <Form onSubmit={submit} id="login">
                   <Form.Group>
-                    <InputGroup className="mb-3">
+                    <InputGroup className="mb-3 shadow">
                       <InputGroup.Text>@</InputGroup.Text>
                       <FormControl
                         placeholder="Username"
@@ -186,6 +192,7 @@ const Home = ({ ready, handleLoginOrRegister = () => {} }) => {
                   <Form.Group className="mb-4">
                     <Form.Label>Password</Form.Label>
                     <Form.Control
+                      className="shadow"
                       type="password"
                       placeholder="Password"
                       id="login.password"

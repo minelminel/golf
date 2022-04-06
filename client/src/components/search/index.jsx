@@ -58,7 +58,7 @@ const Search = (props) => {
           </Form.Group>
 
           <Form.Group className="d-grid gap-2">
-            <Button variant="primary" type="submit">
+            <Button variant="primary" type="submit" className="shadow">
               Search
             </Button>
           </Form.Group>

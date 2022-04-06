@@ -1,28 +1,34 @@
 import React from "react";
 import "./App.css";
 import "bootstrap/dist/css/bootstrap.min.css";
+// import "leaflet/dist/leaflet.css";
 import { Container, Row, Col } from "react-bootstrap";
+import { ToastContainer, toast } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 import Navigation from "./components/navigation";
 import Conversations from "./components/conversations";
 import Conversation from "./components/conversation";
 import Profile from "./components/profile";
-import Timeline from "./components/timeline";
+import Feed from "./components/feed";
 import Home from "./components/home";
 import Calendar from "./components/calendar";
 import Search from "./components/search";
+import Network from "./components/network";
 
 const view = [
   "Home",
-  "Timeline",
+  "Feed",
+  "Network",
   "Calendar",
   "Profile",
   "Inbox",
   "Chat",
   "Search",
-][2];
+][1];
 
 function App() {
+  const [authenticated, setAuthenticated] = React.useState(false);
   const [state, setState] = React.useState({
     // AUTHENTICATION
     auth: {
@@ -86,8 +92,13 @@ function App() {
     },
   });
 
+  const notify = (e) => {
+    toast(e);
+  };
+
   const handleLoginOrRegister = ({ data, error, ready = true }) => {
     // store token for session
+    console.log(data, error, ready);
     setState({ ...state, auth: { data, error, ready } });
   };
 
@@ -110,6 +121,7 @@ function App() {
               borderRight: "1px solid #e7e7e7",
             }}
           >
+            <ToastContainer />
             {view === "Home" && (
               <>
                 <Navigation
@@ -118,6 +130,7 @@ function App() {
                   messages={{ enabled: false }}
                 />
                 <Home
+                  notify={notify}
                   ready={state.auth.ready}
                   handleLoginOrRegister={handleLoginOrRegister}
                 />
@@ -137,14 +150,16 @@ function App() {
             )}
             {view === "Profile" && (
               <>
-                <Navigation brand={{ text: "Your Profile", type: "info" }} />,
+                <Navigation
+                  brand={{ text: "Active 2 days ago", type: "info" }}
+                />
                 <Profile />
               </>
             )}
-            {view === "Timeline" && (
+            {view === "Feed" && (
               <>
-                <Navigation brand={{ text: "Timeline", type: "title" }} />
-                <Timeline />
+                <Navigation brand={{ text: "Feed", type: "title" }} />
+                <Feed />
               </>
             )}
             {view === "Calendar" && (
@@ -157,6 +172,12 @@ function App() {
               <>
                 <Navigation brand={{ text: "Search", type: "title" }} />
                 <Search />
+              </>
+            )}
+            {view === "Network" && (
+              <>
+                <Navigation brand={{ text: "My Network", type: "title" }} />
+                <Network />
               </>
             )}
           </Col>

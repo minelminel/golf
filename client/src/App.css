@@ -6,7 +6,9 @@
 
 body {
   margin: 0;
-  /* font-family: "Nunito", sans-serif !important; */
+  overflow-y: overlay; /* fix vertical scrollbar offset */
+  /* background-color: var(--bs-gray-100) !important; */
+  font-family: "Nunito", sans-serif !important;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

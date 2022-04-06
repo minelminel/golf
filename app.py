@@ -22,8 +22,10 @@ SRID = 4326
 METERS_IN_MILE = 1609.344
 
 import base64
+import hashlib
 import sys
 from pdb import set_trace
+from tabnanny import check
 import time
 import json
 from tqdm import tqdm
@@ -64,6 +66,12 @@ from shapely.geometry import shape
 # utils
 def timestamp():
     return int(time.time() * 1000)
+
+
+def checksum(data):
+    packet = json.dumps(data, sort_keys=True).encode("utf-8")
+    digest = hashlib.md5(packet).hexdigest()
+    return digest
 
 
 app = Flask(__name__)
@@ -271,9 +279,15 @@ class BaseSchema(ma.SQLAlchemyAutoSchema):
         return data
 
 
-class AuthManager:
+class BaseManager:
+    name = None
+
     def __init__(self, *args, **kwargs):
         pass
+
+
+class AuthManager(BaseManager):
+    name = "auth_manager"
 
     def issue_token(self, subject):
         token = Token(sub=subject)
@@ -315,9 +329,8 @@ class EventSchema(BaseSchema):
     payload = fields.Str(allow_none=True)
 
 
-class EventManager:
-    def __init__(self, *args, **kwargs):
-        pass
+class EventManager(BaseManager):
+    name = "event_manager"
 
     def create_event(self, data):
         event = EventSchema().load(data)
@@ -414,9 +427,8 @@ class UserSchema(BaseSchema):
             )
 
 
-class UserManager:
-    def __init__(self, *args, **kwargs):
-        pass
+class UserManager(BaseManager):
+    name = "user_manager"
 
     def create_user(self, data):
         user = UserSchema().load(data)
@@ -506,9 +518,8 @@ class ProfileSchema(BaseSchema):
     ridewalk = fields.Integer(required=False, allow_none=True)  # enum
 
 
-class ProfileManager:
-    def __init__(self, *args, **kwargs):
-        pass
+class ProfileManager(BaseManager):
+    name = "profile_manager"
 
     def create_profile(self, data):
         profile = ProfileSchema().load(data)
@@ -571,7 +582,7 @@ class LocationSchema(BaseSchema):
 
 class ImageModel(BaseModel):
     __tablename__ = "images"
-    img = db.Column(db.Binary(), nullable=False, unique=False)
+    img = db.Column(db.LargeBinary(), nullable=False, unique=False)
 
 
 class ImageSchema(BaseSchema):
@@ -589,9 +600,8 @@ class ImageSchema(BaseSchema):
         return data
 
 
-class ImageManager(BaseSchema):
-    def __init__(self, *args, **kwargs):
-        pass
+class ImageManager(BaseManager):
+    name = "image_manager"
 
     def create_image(self, data, exclude=None):
         image = ImageSchema().load(data)
@@ -620,10 +630,7 @@ class ImageManager(BaseSchema):
         return True
 
 
-class LocationManager:
-    def __init__(self, *args, **kwargs):
-        pass
-
+class LocationManager(BaseManager):
     def create_location(self, data):
         location = LocationSchema().load(data)
         db.session.add(location)
@@ -660,15 +667,21 @@ class LocationManager:
         )
         total = q.count()
         pages = total // size
-        content = q.limit(size).offset(page * size)
-        locations = LocationSchema(many=True).dump(content)
-        for location in locations:
+        locations = q.limit(size).offset(page * size)
+        content = LocationSchema(many=True).dump(locations)
+        for location in content:
             lon, lat = location["location"]["coordinates"]
             distance = vincenty((lat, lon), (latitude, longitude)) / METERS_IN_MILE
             location.update(distance=distance)
         pags = {
-            "content": locations,
-            "metadata": {"page": page, "size": size, "pages": pages, "total": total},
+            "content": content,
+            "metadata": {
+                "page": page,
+                "size": size,
+                "pages": pages,
+                "total": total,
+                "checksum": checksum(content),
+            },
             "query": {"latitude": latitude, "longitude": longitude, "radius": radius},
         }
         return pags
@@ -697,9 +710,8 @@ class MessageSchema(BaseSchema):
     read = fields.Bool(required=False, allow_none=False)
 
 
-class MessageManager:
-    def __init__(self, *args, **kwargs):
-        pass
+class MessageManager(BaseManager):
+    name = "message_manager"
 
     def create_message(self, data):
         message = MessageSchema().load(data)
@@ -769,9 +781,16 @@ class MessageManager:
         pages = total // size
         # messages = q.limit(size).offset(page * size)
         messages = messages[page * size : (page * size) + size]
+        content = MessageSchema(many=True).dump(messages)
         pags = {
-            "content": MessageSchema(many=True).dump(messages),
-            "metadata": {"page": page, "size": size, "pages": pages, "total": total},
+            "content": content,
+            "metadata": {
+                "page": page,
+                "size": size,
+                "pages": pages,
+                "total": total,
+                "checksum": checksum(content),
+            },
         }
         return pags
 
@@ -792,13 +811,20 @@ class MessageManager:
         total = q.count()
         pages = q.count() // size
         messages = q.limit(size).offset(page * size)
+        content = MessageSchema(many=True).dump(messages)
         pags = {
-            "content": MessageSchema(many=True).dump(messages),
+            "content": content,
             "context": {
                 "src": src,
                 "dst": dst,
             },
-            "metadata": {"page": page, "size": size, "pages": pages, "total": total},
+            "metadata": {
+                "page": page,
+                "size": size,
+                "pages": pages,
+                "total": total,
+                "checksum": checksum(content),
+            },
         }
         return pags
 
