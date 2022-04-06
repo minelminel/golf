@@ -8,6 +8,8 @@ https://github.com/lixxu/flask-paginate
 https://github.com/davidaurelio/hashids-python
 https://stackoverflow.com/questions/21474075/show-distinct-tuples-regardless-of-column-order
 https://gist.github.com/gearbox/c4c82d959c06beb3f4eead854995e369
+!! https://gis.stackexchange.com/questions/247113/setting-up-indexes-for-postgis-distance-queries/247131#247131
+https://stackoverflow.com/questions/23981056/geoalchemy-st-dwithin-implementation
 
 """
 UNSAFE = True
@@ -16,16 +18,21 @@ PAGINATION_SIZE = 10
 LOCATION_LATITUDE = 42.90168922195973
 LOCATION_LONGITUDE = -78.67070653228602
 LOCATION_RADIUS = 25  # miles
+SRID = 4326
+METERS_IN_MILE = 1609.344
 
+import base64
 import sys
-import pdb
+from pdb import set_trace
 import time
 import json
 from tqdm import tqdm
 from pprint import pprint
+from functools import wraps
 
-# import jwt
-from flask import Flask, current_app, request, jsonify
+import jwt
+from flask_cors import CORS
+from flask import Flask, current_app, request, jsonify, session, make_response
 from flask_restful import reqparse
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
@@ -36,6 +43,7 @@ from marshmallow import (
     fields,
     validate,
     validates,
+    pre_dump,
     post_dump,
     pre_load,
 )
@@ -44,8 +52,12 @@ from passlib.apps import custom_app_context as password_context
 from marshmallow_sqlalchemy import ModelConverter
 from geoalchemy2 import Geography
 from geoalchemy2.elements import WKTElement
-from geoalchemy2.functions import ST_AsGeoJSON
-from hashids import Hashids as _Hashids
+from geoalchemy2.functions import ST_DWithin
+from vincenty import vincenty
+
+# from geoalchemy2.functions import ST_AsGeoJSON
+
+# from hashids import Hashids as _Hashids
 import shapely
 from shapely.geometry import shape
 
@@ -55,9 +67,15 @@ def timestamp():
 
 
 app = Flask(__name__)
+CORS(app)
 # api = Api()
 db = SQLAlchemy()
 ma = Marshmallow()
+
+token_parser = reqparse.RequestParser()
+token_parser.add_argument(
+    "TOKEN", location="headers", dest="token", type=str, default=None
+)
 
 pagination_parser = reqparse.RequestParser()
 pagination_parser.add_argument(
@@ -71,6 +89,7 @@ location_parser = reqparse.RequestParser()
 location_parser.add_argument("latitude", type=float, default=LOCATION_LATITUDE)
 location_parser.add_argument("longitude", type=float, default=LOCATION_LONGITUDE)
 location_parser.add_argument("radius", type=float, default=LOCATION_RADIUS)
+
 # class Hashids:
 #     def __init__(self, app=None, *args, **kwargs):
 #         if app:
@@ -106,31 +125,99 @@ location_parser.add_argument("radius", type=float, default=LOCATION_RADIUS)
 # hashids = Hashids()
 
 
+def authenticate(*args, **kwargs):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not session:
+                return Reply.unauthorized()
+            return f(*args, **kwargs)
+
+        return decorated_function
+
+    return decorator
+
+
+class Token:
+    """
+    Reserved Claims
+
+    - iss (issuer): Issuer of the JWT
+    - sub (subject): Subject of the JWT (the user)
+    - aud (audience): Recipient for which the JWT is intended
+    - exp (expiration time): Time after which the JWT expires
+    - nbf (not before time): Time before which the JWT must not be accepted for processing
+    - iat (issued at time): Time at which the JWT was issued; can be used to determine age of the JWT
+    - jti (JWT ID): Unique identifier; can be used to prevent the JWT from being replayed (allows a token to be used only once)
+        - this does undermine the stateless nature of JWT's, but can be optionally used in a rolling blacklist key-value store for revocation+ttl
+
+    You can see a full list of reserved claims at the [IANA JSON Web Token Claims Registry](https://www.iana.org/assignments/jwt/jwt.xhtml#claims)
+    """
+
+    def __init__(self, sub: int, exp=None, ttl: int = 60 * 60 * 1):
+        self.sub = sub
+        self.exp = exp if exp is not None else timestamp() + (ttl * 1000)
+
+    @property
+    def valid(self):
+        if self.exp is None:
+            return False
+        return timestamp() <= self.exp
+
+    def serialize(self):
+        return dict(sub=self.sub, exp=self.exp)
+
+    @classmethod
+    def deserialize(
+        cls,
+        sub,
+        exp=None,
+    ):
+        return cls(sub, exp=exp)
+
+
 class Reply:
     @staticmethod
-    def success(data=None, error=None, status=200):
-        return (
-            jsonify(dict(data=data, error=error, timestamp=timestamp(), status=status)),
+    def reply(data, error, status, headers, isjson=True):
+        content = (
+            jsonify(dict(data=data, error=error, timestamp=timestamp(), status=status))
+            if isjson
+            else data
+        )
+        response = make_response(
+            content,
             status,
+        )
+        if headers:
+            response.headers = headers
+        return response
+
+    # plain response: manually set content-type
+    @classmethod
+    def plain(cls, data=None, error=None, status=200, headers=None, dtype="text/plain"):
+        headers = {**(headers or {}), "Content-Type": dtype}
+        return cls.reply(
+            data=data, error=error, status=status, headers=headers, isjson=False
         )
 
-    @staticmethod
-    def error(data=None, error=None, status=400):
-        return (
-            jsonify(dict(data=data, error=error, timestamp=timestamp(), status=status)),
-            status,
-        )
+    # 200: Ok
+    @classmethod
+    def success(cls, data=None, error=None, status=200, headers=None):
+        return cls.reply(data=data, error=error, status=status, headers=headers)
 
-    @staticmethod
-    def unauthorized(data=None, error=None, status=401):
-        return (
-            jsonify(dict(data=data, error=error, timestamp=timestamp(), status=status)),
-            status,
-        )
+    # 400: Client Error
+    @classmethod
+    def error(cls, data=None, error=None, status=400, headers=None):
+        return cls.reply(data=data, error=error, status=status, headers=headers)
+
+    # 401: Unauthorized
+    @classmethod
+    def unauthorized(cls, data=None, error=None, status=401, headers=None):
+        return cls.reply(data=data, error=error, status=status, headers=headers)
 
 
 class Config:
-    SECRET_KEY = "be gay do crime"
+    SECRET_KEY = "helloworld"
     TOKEN_MIN_LENGTH = 8
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_DATABASE_URI = "postgresql://postgres:postgres@localhost:5432"
@@ -184,10 +271,35 @@ class BaseSchema(ma.SQLAlchemyAutoSchema):
         return data
 
 
+class AuthManager:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def issue_token(self, subject):
+        token = Token(sub=subject)
+        encoded = jwt.encode(token.serialize(), "mysecret", algorithm="HS256")
+        return encoded
+
+    def check_token(self, encoded):
+        if not encoded:
+            return False
+        try:
+            decoded = jwt.decode(encoded, "mysecret", algorithms=["HS256"])
+        except jwt.exceptions.InvalidSignatureError:
+            return False
+        except jwt.exceptions.DecodeError:
+            return False
+        except Exception as exc:
+            print(f"Unhandled authentication error: {exc}")
+            return False
+        token = Token(**decoded)
+        return token.valid
+
+
 class EventModel(BaseModel):
     __tablename__ = "events"
     stale = db.Column(db.Boolean(), unique=False, default=False)
-    event = db.Column(db.String(), unique=False, nullable=False)
+    action = db.Column(db.String(), unique=False, nullable=False)
     source = db.Column(db.String(), unique=False, nullable=True)
     payload = db.Column(db.String(), unique=False, nullable=True)
 
@@ -198,7 +310,7 @@ class EventSchema(BaseSchema):
         editable = ("stale",)
 
     stale = fields.Bool(dump_only=True)
-    event = fields.Str(allow_none=False)
+    action = fields.Str(allow_none=False)
     source = fields.Str(allow_none=True)
     payload = fields.Str(allow_none=True)
 
@@ -239,7 +351,7 @@ class EventManager:
             .order_by(EventModel.created_at.desc())
         )
         total = q.count()
-        pages = total // size + 1
+        pages = total // size
         content = q.limit(size).offset(page * size)
         pags = {
             "content": EventSchema(many=True).dump(content),
@@ -256,13 +368,9 @@ class UserModel(BaseModel):
     password = db.Column(db.String(), unique=False, nullable=False)
 
     def hash_password(self, password):
-        if UNSAFE:
-            return
         self.password = password_context.encrypt(password)
 
     def verify_password(self, password):
-        if UNSAFE:
-            return password == self.password
         return password_context.verify(password, self.password)
 
     def generate_auth_token(self, ttl=600):
@@ -342,6 +450,22 @@ class UserManager:
     def query_users(self, params):
         users = db.session.query(UserModel).filter_by(**params).all()
         return UserSchema(many=True).dump(users)
+
+    def login(self, payload):
+        # creds are posted using json payload
+        provider = UserSchema(
+            only=(
+                "username",
+                "password",
+            )
+        ).load(payload)
+        user = db.session.query(UserModel).filter_by(username=provider.username).first()
+        if not user:
+            return None
+        if not user.verify_password(provider.password):
+            return None
+        session.update(UserSchema().dump(user))
+        return user
 
 
 class ProfileModel(BaseModel):
@@ -430,7 +554,7 @@ class LocationModel(BaseModel):
     __tablename__ = "locations"
     fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=True)
     location = db.Column(
-        Geography(geometry_type="POINT", srid=4326), nullable=False, unique=False
+        Geography(geometry_type="POINT", srid=SRID), nullable=False, unique=False
     )
 
 
@@ -442,6 +566,58 @@ class LocationSchema(BaseSchema):
 
     fk = fields.Integer(required=True, allow_none=False)
     location = GeoField(required=True, allow_none=False)
+    distance = fields.Decimal(required=False, default=None)
+
+
+class ImageModel(BaseModel):
+    __tablename__ = "images"
+    img = db.Column(db.Binary(), nullable=False, unique=False)
+
+
+class ImageSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = ImageModel
+
+    img = fields.Raw(allow_none=False, required=True)
+    base64 = fields.Str(dump_only=True)
+
+    @pre_dump
+    def encode_img(self, data, **kwargs):
+        img = getattr(data, "img")
+        if img:
+            data.base64 = base64.b64encode(img)
+        return data
+
+
+class ImageManager(BaseSchema):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def create_image(self, data, exclude=None):
+        image = ImageSchema().load(data)
+        db.session.add(image)
+        db.session.commit()
+        return ImageSchema(exclude=exclude).dump(image)
+
+    def read_image(self, pk):
+        image = db.session.query(ImageModel).filter_by(pk=pk).first()
+        return ImageSchema().dump(image)
+
+    def update_image(self, pk, patches, exclude=None):
+        image = db.session.query(ImageModel).filter_by(pk=pk).first()
+        [
+            setattr(image, key, value)
+            for key, value in patches.items()
+            if key in ImageSchema.Meta.editable
+        ]
+        db.session.commit()
+        return ImageSchema(exclude=exclude).dump(image)
+
+    def delete_image(self, pk):
+        image = db.session.query(ImageModel).filter_by(pk=pk).first()
+        db.session.delete(image)
+        db.session.commit()
+        return True
 
 
 class LocationManager:
@@ -475,19 +651,25 @@ class LocationManager:
         return True
 
     def query_locations(self, latitude, longitude, radius, page, size):
-        # do we want to accept a lat/lon or just an arbitrary geojson?
-        p = WKTElement("POINT({0} {1})".format(latitude, longitude), srid=4326)
-        # FIXME
-        # q = db.session.query(LocationModel.location.ST_AsGeoJSON()).order_by(
-        #     LocationModel.location.distance_box(p)
-        # )
-        q = db.session.query(LocationModel)
+        # radius is in miles, convert to meters for query
+        meters = radius * METERS_IN_MILE
+        p = WKTElement("POINT({0} {1})".format(latitude, longitude), srid=SRID)
+        # TODO: order by distance, closest first
+        q = db.session.query(LocationModel).filter(
+            ST_DWithin(LocationModel.location, p, meters)
+        )
         total = q.count()
-        pages = total // size + 1
+        pages = total // size
         content = q.limit(size).offset(page * size)
+        locations = LocationSchema(many=True).dump(content)
+        for location in locations:
+            lon, lat = location["location"]["coordinates"]
+            distance = vincenty((lat, lon), (latitude, longitude)) / METERS_IN_MILE
+            location.update(distance=distance)
         pags = {
-            "content": LocationSchema(many=True).dump(content),
+            "content": locations,
             "metadata": {"page": page, "size": size, "pages": pages, "total": total},
+            "query": {"latitude": latitude, "longitude": longitude, "radius": radius},
         }
         return pags
 
@@ -584,7 +766,7 @@ class MessageManager:
             messages.append(message)
         # TODO: guarantee sort messages by timestamp
         total = len(messages)
-        pages = total // size + 1
+        pages = total // size
         # messages = q.limit(size).offset(page * size)
         messages = messages[page * size : (page * size) + size]
         pags = {
@@ -605,28 +787,70 @@ class MessageManager:
             )
             .order_by(MessageModel.created_at.desc())
         )
+        src = user_manager.read_user(src_fk)
+        dst = user_manager.read_user(dst_fk)
         total = q.count()
-        pages = q.count() // size + 1
+        pages = q.count() // size
         messages = q.limit(size).offset(page * size)
         pags = {
             "content": MessageSchema(many=True).dump(messages),
+            "context": {
+                "src": src,
+                "dst": dst,
+            },
             "metadata": {"page": page, "size": size, "pages": pages, "total": total},
         }
         return pags
 
 
 # ----------------------------------- #
-@app.route("/auth/generate", methods=["POST"])
-def generate_token():
-    token = "asdf"
-    return Reply.success(data=dict(token=token))
+@app.route("/", methods=["GET"])
+def index():
+    omit = (
+        "HEAD",
+        "OPTIONS",
+    )
+    return {
+        rule.rule: dict(
+            methods=sorted(
+                filter(
+                    lambda r: r not in omit,
+                    rule.methods,
+                )
+            ),
+            endpoint=rule.endpoint,
+        )
+        for rule in current_app.url_map.iter_rules()
+    }
+
+
+@app.route("/auth/register", methods=["POST"])
+def auth_register():
+    user = user_manager.create_user(request.get_json())
+    subject = user_manager.login(request.get_json())
+    if subject is not None:
+        return Reply.success(
+            data=dict(token=auth_manager.issue_token(subject=subject.pk))
+        )
+    return Reply.error()
+
+
+@app.route("/auth/login", methods=["POST"])
+def issue_token():
+    subject = user_manager.login(request.get_json())
+    if subject is not None:
+        return Reply.success(
+            data=dict(token=auth_manager.issue_token(subject=subject.pk))
+        )
+    return Reply.unauthorized()
 
 
 @app.route("/auth/validate", methods=["POST"])
 def validate_token():
-    token = request.args.get("token") or request.get_json().get("token")
-    token = True
-    return Reply.success(data=token)
+    token = token_parser.parse_args().get("token")
+    if auth_manager.check_token(token):
+        return Reply.success(data=True)
+    return Reply.unauthorized(data=False)
 
 
 # ----------------------------------- #
@@ -636,7 +860,7 @@ def create_event():
 
 
 @app.route("/events/<int:pk>", methods=["GET"])
-def read_event(pk=None):
+def read_event(pk):
     return Reply.success(data=event_manager.read_event(pk))
 
 
@@ -665,7 +889,7 @@ def create_user():
 
 
 @app.route("/users/<int:pk>", methods=["GET"])
-def read_user(pk=None):
+def read_user(pk):
     return Reply.success(data=user_manager.read_user(pk))
 
 
@@ -757,18 +981,41 @@ def delete_message(pk):
 # ----------------------------------- #
 @app.route("/conversations/<int:pk>", methods=["GET"])
 def get_conversations(pk):
-    # TODO: validate ownership of pk
-    # TODO: optional reverse url param
     pags = pagination_parser.parse_args()
     return Reply.success(data=message_manager.get_conversations(pk, **pags))
 
 
 @app.route("/conversations/<int:src_fk>/<int:dst_fk>", methods=["GET"])
 def get_conversation(src_fk, dst_fk):
-    # TODO: validate ownership of src_fk
-    # TODO: optional reverse url param
     pags = pagination_parser.parse_args()
     return Reply.success(data=message_manager.get_conversation(src_fk, dst_fk, **pags))
+
+
+# ----------------------------------- #
+@app.route("/images", methods=["POST"])
+def create_image():
+    return Reply.success(
+        data=image_manager.create_image({"img": request.data}, exclude=["img"])
+    )
+
+
+@app.route("/images/<int:pk>", methods=["GET"])
+def read_image(pk):
+    # DEV:
+    image = image_manager.read_image(pk=1)
+    return Reply.plain(data=image.get("img"), dtype="image/png")
+
+
+@app.route("/images/<int:pk>", methods=["PATCH"])
+def update_image(pk):
+    return Reply.success(
+        data=image_manager.update_image(pk, request.get_json(), exclude=["img"])
+    )
+
+
+@app.route("/images/<int:pk>", methods=["DELETE"])
+def delete_image(pk):
+    return Reply.success(data=image_manager.delete_image(pk))
 
 
 # ----------------------------------- #
@@ -780,14 +1027,16 @@ if __name__ == "__main__":
     ma.init_app(app)
 
     # hashids.init_app(app)
+    auth_manager = AuthManager()
     user_manager = UserManager()
     profile_manager = ProfileManager()
     location_manager = LocationManager()
     event_manager = EventManager()
     message_manager = MessageManager()
+    image_manager = ImageManager()
 
-    RESET = True
-    N = 15
+    RESET = False
+    N = 3
 
     with app.app_context() as ctx:
         if RESET:
@@ -797,25 +1046,25 @@ if __name__ == "__main__":
             with open("./data/users.json", "r") as file:
                 users = json.load(file)
                 users = users[:N]
-            for i, user in tqdm(enumerate(users)):
+            for i, user in tqdm(enumerate(users), desc="Loading users"):
                 user_manager.create_user(user)
 
             with open("./data/profiles.json", "r") as file:
                 profiles = json.load(file)
                 profiles = profiles[:N]
-            for i, profile in tqdm(enumerate(profiles)):
+            for i, profile in tqdm(enumerate(profiles), desc="Loading profiles"):
                 profile_manager.create_profile({**profile, "fk": i + 1})
 
             with open("./data/messages.json", "r") as file:
                 messages = json.load(file)
                 messages = messages[:N]
-            for i, message in tqdm(enumerate(messages)):
+            for i, message in tqdm(enumerate(messages), desc="Loading messages"):
                 message_manager.create_message(message)
 
             with open("./data/locations.json", "r") as file:
                 locations = json.load(file)
                 locations = locations[:N]
-            for i, location in tqdm(enumerate(locations)):
+            for i, location in tqdm(enumerate(locations), desc="Loading locations"):
                 location_manager.create_location({**location, "fk": i + 1})
         else:
             db.create_all()

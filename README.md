@@ -131,3 +131,72 @@ INNER JOIN messages t2
 ON t1.src_fk = t2.dst_fk AND t1.dst_fk = t2.src_fk
 AND t1.src_fk > t1.dst_fk;
 ```
+
+---
+
+### Message Queue
+
+```python
+import pika
+
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(
+        "localhost", 5672, "/", pika.PlainCredentials("rabbit", "rabbit")
+    )
+)
+channel = connection.channel()
+channel.exchange_declare(exchange="golf.exchange")
+channel.queue_declare(queue="golf.queue")
+channel.queue_bind(
+    queue="golf.queue", exchange="golf.exchange", routing_key="golf.routing"
+)
+channel.basic_publish(
+    exchange="golf.exchange", routing_key="golf.routing", body="Hello World!"
+)
+
+
+def consume(ch, method, properties, body):
+    print(f"Received body: {body}")
+
+
+channel.basic_consume(queue="golf.queue", on_message_callback=consume, auto_ack=True)
+channel.start_consuming()
+```
+
+---
+
+## UI Presentations
+
+component structure:
+
+- index.jsx
+- style.jsx
+- logic.jsx
+- input.jsx
+
+components:
+
+- profile header
+- profile calendar tray
+- profile location panel
+
+todo:
+
+- splash & call to action
+- login/register
+- edit profile
+- view profile
+  - stats popout
+  - map popout
+- conversation inbox
+- conversation chat
+- timeline
+- availablity calendar
+
+---
+
+## Calendar
+
+- morning (6-11)
+- midday (11-4)
+- twilight (4-9)

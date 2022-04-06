@@ -1,4 +1,4 @@
-# docker-compose up -d
+# docker-compose up -d db mq
 # docker exec -it basic-postgres /bin/sh
 # docker-compose down
 version: '3.8'
@@ -15,6 +15,17 @@ services:
     volumes: 
       # - db:/var/lib/postgresql/data
       - ./db:/db
+  mq:
+    image: rabbitmq:3-management
+    restart: always
+    environment:
+      - RABBITMQ_DEFAULT_USER=rabbit
+      - RABBITMQ_DEFAULT_PASS=rabbit
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    volumes: []
+
 volumes:
   db:
     driver: local

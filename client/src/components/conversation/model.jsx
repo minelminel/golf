@@ -1,0 +1,191 @@
+export const Model = {
+  context: {
+    src: {
+      pk: 1,
+      username: "alice",
+    },
+    dst: {
+      pk: 2,
+      username: "bob",
+    },
+  },
+  content: [
+    {
+      body: "luctus et ultrices posuere cubilia curae donec pharetra magna vestibulum",
+      created_at: 1648966415179,
+      dst_fk: 2,
+      dst: {
+        pk: 2,
+        username: "bob",
+      },
+      pk: 100,
+      read: false,
+      src_fk: 1,
+      src: {
+        pk: 1,
+        username: "alice",
+      },
+      updated_at: null,
+    },
+    {
+      body: "dis parturient montes nascetur ridiculus mus vivamus",
+      created_at: 1648966415173,
+      dst_fk: 1,
+      dst: {
+        pk: 1,
+        username: "alice",
+      },
+      pk: 99,
+      read: false,
+      src_fk: 2,
+      src: {
+        pk: 2,
+        username: "bob",
+      },
+      updated_at: null,
+    },
+    {
+      body: "nisl nunc rhoncus dui",
+      created_at: 1648966415166,
+      dst_fk: 1,
+      dst: {
+        pk: 1,
+        username: "alice",
+      },
+      pk: 98,
+      read: false,
+      src_fk: 2,
+      src: {
+        pk: 2,
+        username: "bob",
+      },
+      updated_at: null,
+    },
+    {
+      body: "libero quis orci nullam molestie nibh in lectus pellentesque at nulla suspendisse potenti cras",
+      created_at: 1648966415160,
+      dst_fk: 1,
+      dst: {
+        pk: 1,
+        username: "alice",
+      },
+      pk: 97,
+      read: false,
+      src_fk: 2,
+      src: {
+        pk: 2,
+        username: "bob",
+      },
+      updated_at: null,
+    },
+    {
+      body: "suspendisse ornare consequat lectus in est risus auctor sed tristique in tempus",
+      created_at: 1648966415153,
+      dst_fk: 1,
+      dst: {
+        pk: 1,
+        username: "alice",
+      },
+      pk: 96,
+      read: false,
+      src_fk: 2,
+      src: {
+        pk: 2,
+        username: "bob",
+      },
+      updated_at: null,
+    },
+    {
+      body: "nullam sit amet turpis elementum ligula vehicula consequat morbi a ipsum integer a",
+      created_at: 1648966415148,
+      dst_fk: 2,
+      dst: {
+        pk: 2,
+        username: "bob",
+      },
+      pk: 95,
+      read: false,
+      src_fk: 1,
+      src: {
+        pk: 1,
+        username: "alice",
+      },
+      updated_at: null,
+    },
+    {
+      body: "nulla ac enim in tempor",
+      created_at: 1648966415142,
+      dst_fk: 2,
+      dst: {
+        pk: 2,
+        username: "bob",
+      },
+      pk: 94,
+      read: false,
+      src_fk: 1,
+      src: {
+        pk: 1,
+        username: "alice",
+      },
+      updated_at: null,
+    },
+    {
+      body: "justo etiam pretium iaculis justo in hac habitasse platea dictumst",
+      created_at: 1648966415136,
+      dst_fk: 1,
+      dst: {
+        pk: 1,
+        username: "alice",
+      },
+      pk: 93,
+      read: false,
+      src_fk: 2,
+      src: {
+        pk: 2,
+        username: "bob",
+      },
+      updated_at: null,
+    },
+    {
+      body: "nisl nunc rhoncus dui vel",
+      created_at: 1648966415129,
+      dst_fk: 2,
+      dst: {
+        pk: 2,
+        username: "bob",
+      },
+      pk: 92,
+      read: false,
+      src_fk: 1,
+      src: {
+        pk: 1,
+        username: "alice",
+      },
+      updated_at: null,
+    },
+    {
+      body: "tortor quis turpis sed ante vivamus",
+      created_at: 1648966415123,
+      dst_fk: 2,
+      dst: {
+        pk: 2,
+        username: "bob",
+      },
+      pk: 91,
+      read: false,
+      src_fk: 1,
+      src: {
+        pk: 1,
+        username: "alice",
+      },
+      updated_at: null,
+    },
+  ],
+  metadata: {
+    checksum: "9591818c07e900db7e1e0bc4b884c945e6a61b24",
+    page: 0,
+    pages: 1,
+    size: 10,
+    total: 10,
+  },
+};

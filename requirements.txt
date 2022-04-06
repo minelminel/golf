@@ -5,11 +5,18 @@ flask-sqlalchemy
 flask-marshmallow
 marshmallow-sqlalchemy
 psycopg2-binary
+flask-CORS
+
 passlib
-# pyjwt
-tqdm
-geoalchemy2
+pyjwt
 hashids
-requests
+
+geoalchemy2
 geojson
 shapely
+vincenty
+
+pika
+
+requests
+tqdm
