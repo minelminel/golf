@@ -25,7 +25,7 @@ const view = [
   "Inbox",
   "Chat",
   "Search",
-][1];
+][3];
 
 function App() {
   const [authenticated, setAuthenticated] = React.useState(false);
@@ -119,6 +119,7 @@ function App() {
             style={{
               borderLeft: "1px solid #e7e7e7",
               borderRight: "1px solid #e7e7e7",
+              backgroundColor: "var(--bs-light)",
             }}
           >
             <ToastContainer />

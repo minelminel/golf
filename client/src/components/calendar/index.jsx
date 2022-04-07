@@ -1,21 +1,12 @@
 import React from "react";
 import { Container, Row, Col, Button } from "react-bootstrap";
-import { CheckCircle } from "react-feather";
 
 import { Model } from "../calendar/model";
 
+// TODO: enum
 const slots = { 1: "Morning", 2: "Midday", 3: "Twilight" };
-const days = {
-  0: "Sunday",
-  1: "Monday",
-  2: "Tuesday",
-  3: "Wednesday",
-  4: "Thursday",
-  5: "Friday",
-  6: "Saturday",
-};
 
-const Slot = ({
+const Availability = ({
   day = null,
   value = 0,
   available = true,
@@ -31,9 +22,7 @@ const Slot = ({
       }}
       className={`${color} shadow`}
       onClick={onClick}
-    >
-      {available && <CheckCircle className="text-light" size={18} />}
-    </div>
+    ></div>
   );
 };
 
@@ -41,31 +30,71 @@ const Calendar = (props) => {
   props = { ...props, ...Model };
   const [state, setState] = React.useState(props);
 
+  React.useEffect(() => {
+    loadPage();
+  }, []);
+
+  const loadPage = () => {
+    console.log(`loadPage`);
+    const url =
+      `http://localhost:4000/calendar/query?` +
+      new URLSearchParams({
+        fk: 1,
+      }).toString();
+    console.log(url);
+    fetch(url, {
+      method: "POST",
+    })
+      .then((response) => response.json())
+      .then((json) => {
+        console.log(json);
+        setState(json.data);
+      })
+      .catch((error) => {
+        console.error(error);
+      });
+  };
+
   const pad = 3;
 
   const toggleSlot = (date, slot) => {
-    const entry = state.content.find((element) => element.date === date);
-    let available;
-    if (entry.available.includes(slot)) {
-      available = entry.available.filter((element) => element !== slot);
-    } else {
-      available = [...entry.available, slot];
-    }
-    state.content[entry.index] = { ...entry, date, available };
-    setState({ ...state });
+    console.log(date, slot);
+    // const entry = state.content.find((element) => element.date === date);
+    // let available;
+    // if (entry.available.includes(slot)) {
+    //   available = entry.available.filter((element) => element !== slot);
+    // } else {
+    //   available = [...entry.available, slot];
+    // }
+    // state.content[entry.index] = { ...entry, date, available };
+    // setState({ ...state });
   };
 
   return (
     <>
       <Container className="text-center">
         <Row className={`mb-${pad}`}>
-          <Col className="col-3"></Col>
+          <Col className="col-3">
+            <span
+              style={{
+                fontSize: "small",
+              }}
+            >
+              🟦 indicates <em>available</em>
+            </span>
+          </Col>
           {Object.values(slots).map((slot) => (
             <Col className="text-muted">{slot}</Col>
           ))}
         </Row>
         {props.content.map((day) => {
           const date = new Date(day.date);
+          const month = date
+            .toLocaleString("default", { month: "long" })
+            .slice(0, 3);
+          const weekday = date
+            .toLocaleString("default", { weekday: "long" })
+            .slice(0, 3);
           return (
             <Row
               className={`mb-${pad}`}
@@ -74,21 +103,20 @@ const Calendar = (props) => {
               }}
             >
               <Col
-                className="col-3"
+                className="col-3 middle"
                 style={{
-                  paddingTop: "auto",
+                  padding: "0 auto",
                 }}
               >
                 <Row>
                   <Col>
-                    <small>{days[date.getDay()]}</small>
+                    <small>{`${weekday}, ${month} ${date.getDate()}`}</small>
                   </Col>
-                  <Col className="text-muted">{day.date}</Col>
                 </Row>
               </Col>
               {Object.entries(slots).map(([value, label], index) => (
                 <Col>
-                  <Slot
+                  <Availability
                     day={day.date}
                     value={index + 1}
                     onClick={(e) => toggleSlot(day.date, index + 1)}

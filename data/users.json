@@ -2,7 +2,13 @@
   {
     "email": "alice@mail.com",
     "username": "alice",
-    "password": "alice"
+    "password": "alice",
+    "profile": {
+      "bio": "whiteboard back-end paradigms"
+    },
+    "location": {
+      "location": { "coordinates": [106.7809681, -6.1487501], "type": "Point" }
+    }
   },
   {
     "email": "bob@mail.com",

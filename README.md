@@ -200,3 +200,7 @@ todo:
 - morning (6-11)
 - midday (11-4)
 - twilight (4-9)
+
+```bash
+curl -s localhost:4000 | jq -r 'keys[]'
+```

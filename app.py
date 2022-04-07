@@ -24,16 +24,19 @@ METERS_IN_MILE = 1609.344
 import base64
 import hashlib
 import sys
+import datetime
 from pdb import set_trace
-from tabnanny import check
 import time
 import json
 from tqdm import tqdm
 from pprint import pprint
 from functools import wraps
+from types import SimpleNamespace
 
 import jwt
+from sqlalchemy import and_, func
 from flask_cors import CORS
+from sqlalchemy.orm import relationship
 from flask import Flask, current_app, request, jsonify, session, make_response
 from flask_restful import reqparse
 from flask_sqlalchemy import SQLAlchemy
@@ -74,6 +77,26 @@ def checksum(data):
     return digest
 
 
+def load_date(string):
+    return datetime.datetime.strptime(string, "%Y-%m-%d")
+
+
+def dump_date(dt):
+    return datetime.datetime.strftime(dt, "%Y-%m-%d")
+
+
+SVC = SimpleNamespace(
+    **{
+        "auth": True,
+        "user": True,
+        "profile": True,
+        "location": False,
+        "image": False,
+        "message": False,
+        "event": False,
+    }
+)
+
 app = Flask(__name__)
 CORS(app)
 # api = Api()
@@ -97,6 +120,17 @@ location_parser = reqparse.RequestParser()
 location_parser.add_argument("latitude", type=float, default=LOCATION_LATITUDE)
 location_parser.add_argument("longitude", type=float, default=LOCATION_LONGITUDE)
 location_parser.add_argument("radius", type=float, default=LOCATION_RADIUS)
+
+calendar_parser = reqparse.RequestParser()
+calendar_parser.add_argument(
+    # https://stackoverflow.com/a/38761364/12641958
+    "date",
+    location="args",
+    type=load_date,
+    default=load_date(dump_date(datetime.datetime.now())),
+)
+calendar_parser.add_argument("days", location="args", type=int, default=7)
+calendar_parser.add_argument("fk", location="args", type=int, required=True)
 
 # class Hashids:
 #     def __init__(self, app=None, *args, **kwargs):
@@ -231,6 +265,7 @@ class Config:
     SQLALCHEMY_DATABASE_URI = "postgresql://postgres:postgres@localhost:5432"
 
 
+# MODELS
 class BaseModel(db.Model):
     __abstract__ = True
     pk = db.Column(db.Integer(), primary_key=True, unique=True)
@@ -240,6 +275,95 @@ class BaseModel(db.Model):
     )
 
 
+class EventModel(BaseModel):
+    __tablename__ = "events"
+    stale = db.Column(db.Boolean(), unique=False, default=False)
+    action = db.Column(db.String(), unique=False, nullable=False)
+    source = db.Column(db.String(), unique=False, nullable=True)
+    payload = db.Column(db.String(), unique=False, nullable=True)
+
+
+class ProfileModel(BaseModel):
+    __tablename__ = "profiles"
+    alias = db.Column(db.String(), nullable=True, unique=False)
+    bio = db.Column(db.String(), nullable=True, unique=False)
+    age = db.Column(db.Integer(), nullable=True, unique=False)
+    handicap = db.Column(db.Float(), nullable=True, unique=False)
+    drinking = db.Column(db.Boolean(), nullable=True, unique=False)
+    ridewalk = db.Column(db.Integer(), nullable=True, unique=False)
+
+    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
+    user = relationship("UserModel", cascade="all,delete", back_populates="profile")
+
+
+class LocationModel(BaseModel):
+    __tablename__ = "locations"
+    location = db.Column(
+        Geography(geometry_type="POINT", srid=SRID), nullable=False, unique=False
+    )
+    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
+    user = relationship("UserModel", cascade="all,delete", back_populates="location")
+
+
+class ImageModel(BaseModel):
+    __tablename__ = "images"
+    img = db.Column(db.LargeBinary(), nullable=False, unique=False)
+
+
+class MessageModel(BaseModel):
+    __tablename__ = "messages"
+    src_fk = db.Column(
+        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
+    )
+    dst_fk = db.Column(
+        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
+    )
+    body = db.Column(db.String(), nullable=False, unique=False)
+    read = db.Column(db.Boolean(), nullable=False, unique=False, default=False)
+
+
+class CalendarModel(BaseModel):
+    __tablename__ = "calenders"
+    date = db.Column(db.Date(), nullable=False, unique=False)
+    time = db.Column(db.Integer(), nullable=False, unique=False)  # enum[0:3]
+
+    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
+    user = relationship("UserModel", cascade="all,delete", back_populates="calendar")
+
+
+class UserModel(BaseModel):
+    __tablename__ = "users"
+    verified = db.Column(db.Boolean(), unique=False, default=False)
+    email = db.Column(db.String(), unique=True, nullable=False)
+    username = db.Column(db.String(), unique=True, nullable=False)
+    password = db.Column(db.String(), unique=False, nullable=False)
+
+    profile = relationship(
+        "ProfileModel", cascade="all,delete", uselist=False, back_populates="user"
+    )
+    location = relationship(
+        "LocationModel", cascade="all,delete", uselist=False, back_populates="user"
+    )
+    calendar = relationship(
+        "CalendarModel", cascade="all,delete", back_populates="user"
+    )
+    # image = relationship("ImageModel", uselist=False, back_populates="user")
+
+    def hash_password(self, password):
+        self.password = password_context.encrypt(password)
+
+    def verify_password(self, password):
+        return password_context.verify(password, self.password)
+
+    def generate_auth_token(self, ttl=600):
+        pass
+
+    @staticmethod
+    def validate_auth_token(token):
+        pass
+
+
+# SCHEMAS
 class BaseSchema(ma.SQLAlchemyAutoSchema):
     """
     missing     used for deserialization (dump)
@@ -279,6 +403,135 @@ class BaseSchema(ma.SQLAlchemyAutoSchema):
         return data
 
 
+class EventSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = EventModel
+        editable = ("stale",)
+
+    stale = fields.Bool(dump_only=True)
+    action = fields.Str(allow_none=False)
+    source = fields.Str(allow_none=True)
+    payload = fields.Str(allow_none=True)
+
+
+class ProfileSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = ProfileModel
+        editable = (
+            "alias",
+            "bio",
+            "age",
+            "handicap",
+            "drinking",
+            "ridewalk",
+        )
+
+    # fk = fields.Int(required=True, allow_none=False)
+    alias = fields.Str(
+        required=False, allow_none=True, validate=validate.Length(max=32)
+    )
+    bio = fields.Str(required=False, allow_none=True, validate=validate.Length(max=250))
+    age = fields.Int(
+        required=False, allow_none=True, validate=validate.Range(min=1, max=100)
+    )
+    handicap = fields.Float(required=False, allow_none=True)
+    drinking = fields.Boolean(required=False, allow_none=True)
+    ridewalk = fields.Integer(required=False, allow_none=True)
+
+
+class GeoField(fields.Field):
+    def _serialize(self, value, attr, obj, **kwargs):
+        return json.loads(geojson.dumps(shapely.wkb.loads(str(value), True)))
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        return str(shape(value))
+
+
+class GeoConverter(ModelConverter):
+    SQLA_TYPE_MAPPING = ModelConverter.SQLA_TYPE_MAPPING.copy()
+    SQLA_TYPE_MAPPING.update({Geography: GeoField})
+
+
+class LocationSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = LocationModel
+        model_coverter = GeoConverter
+        editable = ("point",)
+
+    location = GeoField(required=True, allow_none=False)
+    distance = fields.Decimal(required=False, default=None)
+
+
+class ImageSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = ImageModel
+
+    img = fields.Raw(allow_none=False, required=True)
+    base64 = fields.Str(dump_only=True)
+
+    @pre_dump
+    def encode_img(self, data, **kwargs):
+        img = getattr(data, "img")
+        if img:
+            data.base64 = base64.b64encode(img)
+        return data
+
+
+class MessageSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = MessageModel
+        editable = ("read",)
+
+    src_fk = fields.Int(required=True, allow_none=False)
+    dst_fk = fields.Int(required=True, allow_none=False)
+    body = fields.Str(required=True, allow_none=False)
+    read = fields.Bool(required=False, allow_none=False)
+
+
+class CalendarSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = CalendarModel
+        editable = ("time",)
+
+    fk = fields.Int(required=True, allow_none=False)
+
+
+class UserSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = UserModel
+        editable = (
+            "username",
+            "email",
+        )
+
+    verified = fields.Bool(required=False, allow_none=False)
+    username = fields.Str(
+        required=True, allow_none=False, validate=validate.Length(min=3, max=32)
+    )
+    email = fields.Str(
+        required=True, allow_none=False, validate=validate.Length(min=3, max=32)
+    )
+    password = fields.Str(
+        load_only=True,
+        required=True,
+        allow_none=False,
+        validate=validate.Length(max=128),
+    )
+    profile = fields.Nested(ProfileSchema, many=False)
+    location = fields.Nested(LocationSchema, many=False)
+    calendar = fields.Nested(CalendarSchema, many=True)
+
+    @validates("username")
+    def validate_username(self, data, **kwargs):
+        ALLOWABLE_CHARACTERS = set(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
+        )
+        if not set(data).issubset(ALLOWABLE_CHARACTERS):
+            raise ValidationError(
+                f"Username contains non-allowable characters: {set(data).difference(ALLOWABLE_CHARACTERS)}"
+            )
+
+
 class BaseManager:
     name = None
 
@@ -308,25 +561,6 @@ class AuthManager(BaseManager):
             return False
         token = Token(**decoded)
         return token.valid
-
-
-class EventModel(BaseModel):
-    __tablename__ = "events"
-    stale = db.Column(db.Boolean(), unique=False, default=False)
-    action = db.Column(db.String(), unique=False, nullable=False)
-    source = db.Column(db.String(), unique=False, nullable=True)
-    payload = db.Column(db.String(), unique=False, nullable=True)
-
-
-class EventSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = EventModel
-        editable = ("stale",)
-
-    stale = fields.Bool(dump_only=True)
-    action = fields.Str(allow_none=False)
-    source = fields.Str(allow_none=True)
-    payload = fields.Str(allow_none=True)
 
 
 class EventManager(BaseManager):
@@ -368,154 +602,14 @@ class EventManager(BaseManager):
         content = q.limit(size).offset(page * size)
         pags = {
             "content": EventSchema(many=True).dump(content),
-            "metadata": {"page": page, "size": size, "pages": pages, "total": total},
+            "metadata": {
+                "page": page,
+                "size": size,
+                "pages": pages,
+                "total": total,
+            },
         }
         return pags
-
-
-class UserModel(BaseModel):
-    __tablename__ = "users"
-    verified = db.Column(db.Boolean(), unique=False, default=False)
-    email = db.Column(db.String(), unique=True, nullable=False)
-    username = db.Column(db.String(), unique=True, nullable=False)
-    password = db.Column(db.String(), unique=False, nullable=False)
-
-    def hash_password(self, password):
-        self.password = password_context.encrypt(password)
-
-    def verify_password(self, password):
-        return password_context.verify(password, self.password)
-
-    def generate_auth_token(self, ttl=600):
-        pass
-
-    @staticmethod
-    def validate_auth_token(token):
-        pass
-
-
-class UserSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = UserModel
-        editable = (
-            "username",
-            "email",
-        )
-
-    verified = fields.Bool(required=False, allow_none=False)
-    username = fields.Str(
-        required=True, allow_none=False, validate=validate.Length(min=3, max=32)
-    )
-    email = fields.Str(
-        required=True, allow_none=False, validate=validate.Length(min=3, max=32)
-    )
-    password = fields.Str(
-        load_only=True,
-        required=True,
-        allow_none=False,
-        validate=validate.Length(max=128),
-    )
-
-    @validates("username")
-    def validate_username(self, data, **kwargs):
-        ALLOWABLE_CHARACTERS = set(
-            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
-        )
-        if not set(data).issubset(ALLOWABLE_CHARACTERS):
-            raise ValidationError(
-                f"Username contains non-allowable characters: {set(data).difference(ALLOWABLE_CHARACTERS)}"
-            )
-
-
-class UserManager(BaseManager):
-    name = "user_manager"
-
-    def create_user(self, data):
-        user = UserSchema().load(data)
-        user.hash_password(user.password)
-        db.session.add(user)
-        db.session.commit()
-        # TODO: create profile for new user
-        # TODO: create location for new user
-        return UserSchema().dump(user)
-
-    def read_user(self, pk):
-        user = db.session.query(UserModel).filter_by(pk=pk).first()
-        return UserSchema().dump(user)
-
-    def update_user(self, pk, patches):
-        user = db.session.query(UserModel).filter_by(pk=pk).first()
-        [
-            setattr(user, key, value)
-            for key, value in patches.items()
-            if key in UserSchema.Meta.editable
-        ]
-        db.session.commit()
-        return UserSchema().dump(user)
-
-    def delete_user(self, pk):
-        user = db.session.query(UserModel).filter_by(pk=pk).first()
-        db.session.delete(user)
-        db.session.commit()
-        return True
-
-    def query_users(self, params):
-        users = db.session.query(UserModel).filter_by(**params).all()
-        return UserSchema(many=True).dump(users)
-
-    def login(self, payload):
-        # creds are posted using json payload
-        provider = UserSchema(
-            only=(
-                "username",
-                "password",
-            )
-        ).load(payload)
-        user = db.session.query(UserModel).filter_by(username=provider.username).first()
-        if not user:
-            return None
-        if not user.verify_password(provider.password):
-            return None
-        session.update(UserSchema().dump(user))
-        return user
-
-
-class ProfileModel(BaseModel):
-    __tablename__ = "profiles"
-    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
-    alias = db.Column(
-        db.String(), nullable=True, unique=False
-    )  # initial default: username
-    bio = db.Column(db.String(), nullable=True, unique=False)
-    age = db.Column(db.Integer(), nullable=True, unique=False)
-    handicap = db.Column(db.Float(), nullable=True, unique=False)
-    drinking = db.Column(db.Boolean(), nullable=True, unique=False)
-    ridewalk = db.Column(db.Integer(), nullable=True, unique=False)  # external enum
-
-
-class ProfileSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = ProfileModel
-        editable = (
-            "alias",
-            "bio",
-            "age",
-            "handicap",
-            "drinking",
-            "ridewalk",
-        )
-
-    fk = fields.Int(required=True, allow_none=False)
-    alias = fields.Str(
-        required=False, allow_none=True, validate=validate.Length(max=32)
-    )
-    bio = fields.Str(required=False, allow_none=True, validate=validate.Length(max=250))
-    age = fields.Int(
-        required=False, allow_none=True, validate=validate.Range(min=1, max=100)
-    )
-    handicap = fields.Float(required=False, allow_none=True)
-    drinking = fields.Boolean(required=False, allow_none=True)
-    ridewalk = fields.Integer(required=False, allow_none=True)  # enum
 
 
 class ProfileManager(BaseManager):
@@ -544,88 +638,6 @@ class ProfileManager(BaseManager):
     def delete_profile(self, pk):
         profile = db.session.query(ProfileModel).filter_by(pk=pk).first()
         db.session.delete(profile)
-        db.session.commit()
-        return True
-
-
-class GeoField(fields.Field):
-    def _serialize(self, value, attr, obj, **kwargs):
-        return json.loads(geojson.dumps(shapely.wkb.loads(str(value), True)))
-
-    def _deserialize(self, value, attr, data, **kwargs):
-        return str(shape(value))
-
-
-class GeoConverter(ModelConverter):
-    SQLA_TYPE_MAPPING = ModelConverter.SQLA_TYPE_MAPPING.copy()
-    SQLA_TYPE_MAPPING.update({Geography: GeoField})
-
-
-class LocationModel(BaseModel):
-    __tablename__ = "locations"
-    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=True)
-    location = db.Column(
-        Geography(geometry_type="POINT", srid=SRID), nullable=False, unique=False
-    )
-
-
-class LocationSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = LocationModel
-        model_coverter = GeoConverter
-        editable = ("point",)
-
-    fk = fields.Integer(required=True, allow_none=False)
-    location = GeoField(required=True, allow_none=False)
-    distance = fields.Decimal(required=False, default=None)
-
-
-class ImageModel(BaseModel):
-    __tablename__ = "images"
-    img = db.Column(db.LargeBinary(), nullable=False, unique=False)
-
-
-class ImageSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = ImageModel
-
-    img = fields.Raw(allow_none=False, required=True)
-    base64 = fields.Str(dump_only=True)
-
-    @pre_dump
-    def encode_img(self, data, **kwargs):
-        img = getattr(data, "img")
-        if img:
-            data.base64 = base64.b64encode(img)
-        return data
-
-
-class ImageManager(BaseManager):
-    name = "image_manager"
-
-    def create_image(self, data, exclude=None):
-        image = ImageSchema().load(data)
-        db.session.add(image)
-        db.session.commit()
-        return ImageSchema(exclude=exclude).dump(image)
-
-    def read_image(self, pk):
-        image = db.session.query(ImageModel).filter_by(pk=pk).first()
-        return ImageSchema().dump(image)
-
-    def update_image(self, pk, patches, exclude=None):
-        image = db.session.query(ImageModel).filter_by(pk=pk).first()
-        [
-            setattr(image, key, value)
-            for key, value in patches.items()
-            if key in ImageSchema.Meta.editable
-        ]
-        db.session.commit()
-        return ImageSchema(exclude=exclude).dump(image)
-
-    def delete_image(self, pk):
-        image = db.session.query(ImageModel).filter_by(pk=pk).first()
-        db.session.delete(image)
         db.session.commit()
         return True
 
@@ -682,32 +694,43 @@ class LocationManager(BaseManager):
                 "total": total,
                 "checksum": checksum(content),
             },
-            "query": {"latitude": latitude, "longitude": longitude, "radius": radius},
+            "query": {
+                "latitude": latitude,
+                "longitude": longitude,
+                "radius": radius,
+            },
         }
         return pags
 
 
-class MessageModel(BaseModel):
-    __tablename__ = "messages"
-    src_fk = db.Column(
-        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
-    )
-    dst_fk = db.Column(
-        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
-    )
-    body = db.Column(db.String(), nullable=False, unique=False)
-    read = db.Column(db.Boolean(), nullable=False, unique=False, default=False)
+class ImageManager(BaseManager):
+    name = "image_manager"
 
+    def create_image(self, data, exclude=None):
+        image = ImageSchema().load(data)
+        db.session.add(image)
+        db.session.commit()
+        return ImageSchema(exclude=exclude).dump(image)
 
-class MessageSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = MessageModel
-        editable = ("read",)
+    def read_image(self, pk):
+        image = db.session.query(ImageModel).filter_by(pk=pk).first()
+        return ImageSchema().dump(image)
 
-    src_fk = fields.Int(required=True, allow_none=False)
-    dst_fk = fields.Int(required=True, allow_none=False)
-    body = fields.Str(required=True, allow_none=False)
-    read = fields.Bool(required=False, allow_none=False)
+    def update_image(self, pk, patches, exclude=None):
+        image = db.session.query(ImageModel).filter_by(pk=pk).first()
+        [
+            setattr(image, key, value)
+            for key, value in patches.items()
+            if key in ImageSchema.Meta.editable
+        ]
+        db.session.commit()
+        return ImageSchema(exclude=exclude).dump(image)
+
+    def delete_image(self, pk):
+        image = db.session.query(ImageModel).filter_by(pk=pk).first()
+        db.session.delete(image)
+        db.session.commit()
+        return True
 
 
 class MessageManager(BaseManager):
@@ -829,6 +852,129 @@ class MessageManager(BaseManager):
         return pags
 
 
+class CalendarManager(BaseManager):
+    def create_calendar(self, data):
+        calendar = CalendarSchema().load(data)
+        # be nice to ui people, if the resource exists just return it
+        result = (
+            db.session.query(CalendarModel)
+            .filter_by(fk=calendar.fk, date=calendar.date, time=calendar.time)
+            .first()
+        )
+        if result:
+            return self.read_calendar(result.pk)
+        db.session.add(calendar)
+        db.session.commit()
+        return CalendarSchema().dump(calendar)
+
+    def read_calendar(self, pk):
+        calendar = db.session.query(CalendarModel).filter_by(pk=pk).first()
+        return CalendarSchema().dump(calendar)
+
+    def update_calendar(self, pk, patches):
+        calendar = db.session.query(CalendarModel).filter_by(pk=pk).first()
+        [
+            setattr(calendar, key, value)
+            for key, value in patches.items()
+            if key in CalendarSchema.Meta.editable
+        ]
+        db.session.commit()
+        return CalendarSchema().dump(calendar)
+
+    def delete_calendar(self, pk):
+        calendar = db.session.query(CalendarModel).filter_by(pk=pk).first()
+        db.session.delete(calendar)
+        db.session.commit()
+        return True
+
+    def query_calendar(self, fk, date, days):
+        # TODO: accept bulk updates
+        # set some empty column placeholders for days with no entries.
+        # we typically only have max 28 entries per query (7*4)
+        # which eliminates the need for gymnastics in the ui
+        content = dict.fromkeys(
+            [date + datetime.timedelta(days=d) for d in range(days)], {}
+        )
+        total = 0
+        for key in content.keys():
+            calendars = db.session.query(CalendarModel).filter_by(fk=fk, date=key).all()
+            available = [
+                cal["time"] for cal in CalendarSchema(many=True).dump(calendars)
+            ]
+            total += len(available)
+            # don't use an update here, dumb pass-by-reference thing
+            content[key] = dict(date=dump_date(key), available=available)
+        pags = {
+            "content": list(content.values()),
+            "metadata": {
+                "fk": fk,
+                "date": dump_date(date),
+                "days": days,
+                "total": total,
+            },
+        }
+        return pags
+
+
+class UserManager(BaseManager):
+    name = "user_manager"
+
+    def create_user(self, data):
+        user = UserSchema().load(data)
+        user.hash_password(user.password)
+        db.session.add(user)
+        db.session.commit()
+        return UserSchema().dump(user)
+
+    def read_user(self, pk):
+        user = db.session.query(UserModel).filter_by(pk=pk).first()
+        return UserSchema().dump(user)
+
+    def update_user(self, pk, patches):
+        user = db.session.query(UserModel).filter_by(pk=pk).first()
+        [
+            setattr(user, key, value)
+            for key, value in patches.items()
+            if key in UserSchema.Meta.editable
+        ]
+        db.session.commit()
+        return UserSchema().dump(user)
+
+    def delete_user(self, pk):
+        user = db.session.query(UserModel).filter_by(pk=pk).first()
+        db.session.delete(user)
+        db.session.commit()
+        return True
+
+    def query_users(self, params):
+        users = db.session.query(UserModel).filter_by(**params).all()
+        return UserSchema(many=True).dump(users)
+
+    def login(self, payload):
+        # creds are posted using json payload
+        provider = UserSchema(
+            only=(
+                "username",
+                "password",
+            )
+        ).load(payload)
+        user = db.session.query(UserModel).filter_by(username=provider.username).first()
+        if not user:
+            return None
+        if not user.verify_password(provider.password):
+            return None
+        session.update(UserSchema().dump(user))
+        return user
+
+
+# Some relationships should be instantiated after all dependent models have been loaded
+# fmt: off
+# ProfileModel.user_fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
+# UserModel.profile = relationship("ProfileModel", back_populates="user", uselist=False)
+# ProfileModel.user = relationship("UserModel", back_populates="profile")
+# UserSchema.profile = fields.Nested(ProfileSchema, many=False)
+# fmt: on
+
 # ----------------------------------- #
 @app.route("/", methods=["GET"])
 def index():
@@ -850,6 +996,7 @@ def index():
     }
 
 
+# ----------------------------------- #
 @app.route("/auth/register", methods=["POST"])
 def auth_register():
     user = user_manager.create_user(request.get_json())
@@ -1045,6 +1192,39 @@ def delete_image(pk):
 
 
 # ----------------------------------- #
+@app.route("/calendar", methods=["POST"])
+def create_calendar():
+    return Reply.success(data=calendar_manager.create_calendar(request.get_json()))
+
+
+@app.route("/calendar/<int:pk>", methods=["GET"])
+def read_calendar(pk):
+    return Reply.success(data=calendar_manager.read_calendar(pk))
+
+
+@app.route("/calendar/<int:pk>", methods=["PATCH"])
+def update_calendar(pk):
+    return Reply.success(data=calendar_manager.update_calendar(pk, request.get_json()))
+
+
+@app.route("/calendar/<int:pk>", methods=["DELETE"])
+def delete_calendar(pk):
+    return Reply.success(data=calendar_manager.delete_calendar(pk))
+
+
+@app.route("/calendar/query", methods=["POST"])
+def query_calendar():
+    kwargs = calendar_parser.parse_args()
+    return Reply.success(data=calendar_manager.query_calendar(**kwargs))
+
+
+# ----------------------------------- #
+@app.route("/u/<int:pk>", methods=["GET"])
+def get_u(pk):
+    set_trace()
+
+
+# ----------------------------------- #
 if __name__ == "__main__":
     config = Config()
     app.config.from_object(config)
@@ -1060,9 +1240,10 @@ if __name__ == "__main__":
     event_manager = EventManager()
     message_manager = MessageManager()
     image_manager = ImageManager()
+    calendar_manager = CalendarManager()
 
     RESET = False
-    N = 3
+    N = 1
 
     with app.app_context() as ctx:
         if RESET:
@@ -1074,24 +1255,19 @@ if __name__ == "__main__":
                 users = users[:N]
             for i, user in tqdm(enumerate(users), desc="Loading users"):
                 user_manager.create_user(user)
+            pprint(user_manager.read_user(pk=1))
 
-            with open("./data/profiles.json", "r") as file:
-                profiles = json.load(file)
-                profiles = profiles[:N]
-            for i, profile in tqdm(enumerate(profiles), desc="Loading profiles"):
-                profile_manager.create_profile({**profile, "fk": i + 1})
+            # with open("./data/messages.json", "r") as file:
+            #     messages = json.load(file)
+            #     messages = messages[:N]
+            # for i, message in tqdm(enumerate(messages), desc="Loading messages"):
+            #     message_manager.create_message(message)
 
-            with open("./data/messages.json", "r") as file:
-                messages = json.load(file)
-                messages = messages[:N]
-            for i, message in tqdm(enumerate(messages), desc="Loading messages"):
-                message_manager.create_message(message)
-
-            with open("./data/locations.json", "r") as file:
-                locations = json.load(file)
-                locations = locations[:N]
-            for i, location in tqdm(enumerate(locations), desc="Loading locations"):
-                location_manager.create_location({**location, "fk": i + 1})
+            # with open("./data/locations.json", "r") as file:
+            #     locations = json.load(file)
+            #     locations = locations[:N]
+            # for i, location in tqdm(enumerate(locations), desc="Loading locations"):
+            #     location_manager.create_location({**location, "fk": i + 1})
         else:
             db.create_all()
 
@@ -1115,4 +1291,4 @@ if __name__ == "__main__":
         print("🟢 Interactive Mode")
     else:
         print("🔴 Non-interactive Mode")
-        app.run(host="0.0.0.0", port=4000, debug=True, use_reloader=False)
+        app.run(host="0.0.0.0", port=4000, debug=False, use_reloader=False)
