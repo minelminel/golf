@@ -2,13 +2,12 @@
 #root {
   min-height: 100vh;
   height: 100vh;
-  background-color: rgb(40, 40, 40);
 }
 
 body {
   margin: 0;
   overflow-y: overlay; /* fix vertical scrollbar offset */
-  /* background-color: var(--bs-gray-100) !important; */
+  /* background-color: #1b2127 !important; */
   font-family: "Nunito", sans-serif !important;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -24,6 +23,12 @@ code {
     0 4px 4px rgba(0, 0, 0, 0.12), 0 8px 8px rgba(0, 0, 0, 0.12),
     0 16px 16px rgba(0, 0, 0, 0.12);
 } */
+
+.banner {
+  background-color: var(--bs-danger);
+  border: 1px dashed var(--bs-warning);
+  font-style: italic;
+}
 
 img.cropped {
   width: 36px;

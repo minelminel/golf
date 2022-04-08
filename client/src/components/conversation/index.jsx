@@ -4,6 +4,7 @@ import { Container, Row, Col, Button } from "react-bootstrap";
 import { Send } from "react-feather";
 
 import { Model } from "./model";
+import { API } from "../../constants";
 import { formatTimeSince } from "../../utils";
 
 const state = {
@@ -113,7 +114,7 @@ const Conversation = () => {
 
   const loadChat = (src, dst) => {
     console.log(`Loading chat with ${src} and ${dst}`);
-    fetch(`http://192.168.1.114:4000/conversations/${src}/${dst}`, {
+    fetch(`${API}/conversations/${src}/${dst}`, {
       method: "GET",
     })
       .then((response) => response.json())
@@ -124,7 +125,7 @@ const Conversation = () => {
 
   const sendChat = (src, dst, body) => {
     console.log(`Sending message from ${src} to ${dst}: ${body}`);
-    fetch(`http://192.168.1.114:4000/messages`, {
+    fetch(`${API}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

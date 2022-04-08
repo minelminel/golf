@@ -103,18 +103,14 @@ CORS(app)
 db = SQLAlchemy()
 ma = Marshmallow()
 
+# fmt: off
 token_parser = reqparse.RequestParser()
-token_parser.add_argument(
-    "TOKEN", location="headers", dest="token", type=str, default=None
-)
+token_parser.add_argument("TOKEN", location="headers", dest="token", type=str, default=None)
+token_parser.add_argument("PK", location="headers", dest="pk", type=int, default=None)
 
 pagination_parser = reqparse.RequestParser()
-pagination_parser.add_argument(
-    "page", location="args", type=int, default=PAGINATION_PAGE
-)
-pagination_parser.add_argument(
-    "size", location="args", type=int, default=PAGINATION_SIZE
-)
+pagination_parser.add_argument("page", location="args", type=int, default=PAGINATION_PAGE)
+pagination_parser.add_argument("size", location="args", type=int, default=PAGINATION_SIZE)
 
 location_parser = reqparse.RequestParser()
 location_parser.add_argument("latitude", type=float, default=LOCATION_LATITUDE)
@@ -122,15 +118,11 @@ location_parser.add_argument("longitude", type=float, default=LOCATION_LONGITUDE
 location_parser.add_argument("radius", type=float, default=LOCATION_RADIUS)
 
 calendar_parser = reqparse.RequestParser()
-calendar_parser.add_argument(
-    # https://stackoverflow.com/a/38761364/12641958
-    "date",
-    location="args",
-    type=load_date,
-    default=load_date(dump_date(datetime.datetime.now())),
-)
+calendar_parser.add_argument("date", location="args", type=load_date, default=load_date(dump_date(datetime.datetime.now())))
 calendar_parser.add_argument("days", location="args", type=int, default=7)
 calendar_parser.add_argument("fk", location="args", type=int, required=True)
+# fmt: on
+
 
 # class Hashids:
 #     def __init__(self, app=None, *args, **kwargs):
@@ -167,19 +159,20 @@ calendar_parser.add_argument("fk", location="args", type=int, required=True)
 # hashids = Hashids()
 
 
-def authenticate(*args, **kwargs):
+def auth(*args, **kwargs):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            if not session:
-                return Reply.unauthorized()
-            return f(*args, **kwargs)
+            if session or UNSAFE:
+                return f(*args, **kwargs)
+            return Reply.unauthorized(error="Unauthorized")
 
         return decorated_function
 
     return decorator
 
 
+# POJO
 class Token:
     """
     Reserved Claims
@@ -293,7 +286,7 @@ class ProfileModel(BaseModel):
     ridewalk = db.Column(db.Integer(), nullable=True, unique=False)
 
     fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
-    user = relationship("UserModel", cascade="all,delete", back_populates="profile")
+    user = relationship("UserModel", back_populates="profile")
 
 
 class LocationModel(BaseModel):
@@ -302,7 +295,7 @@ class LocationModel(BaseModel):
         Geography(geometry_type="POINT", srid=SRID), nullable=False, unique=False
     )
     fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
-    user = relationship("UserModel", cascade="all,delete", back_populates="location")
+    user = relationship("UserModel", back_populates="location")
 
 
 class ImageModel(BaseModel):
@@ -328,7 +321,7 @@ class CalendarModel(BaseModel):
     time = db.Column(db.Integer(), nullable=False, unique=False)  # enum[0:3]
 
     fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
-    user = relationship("UserModel", cascade="all,delete", back_populates="calendar")
+    user = relationship("UserModel", back_populates="calendar")
 
 
 class UserModel(BaseModel):
@@ -338,15 +331,9 @@ class UserModel(BaseModel):
     username = db.Column(db.String(), unique=True, nullable=False)
     password = db.Column(db.String(), unique=False, nullable=False)
 
-    profile = relationship(
-        "ProfileModel", cascade="all,delete", uselist=False, back_populates="user"
-    )
-    location = relationship(
-        "LocationModel", cascade="all,delete", uselist=False, back_populates="user"
-    )
-    calendar = relationship(
-        "CalendarModel", cascade="all,delete", back_populates="user"
-    )
+    profile = relationship("ProfileModel", uselist=False, back_populates="user")
+    location = relationship("LocationModel", uselist=False, back_populates="user")
+    calendar = relationship("CalendarModel", back_populates="user")
     # image = relationship("ImageModel", uselist=False, back_populates="user")
 
     def hash_password(self, password):
@@ -471,9 +458,10 @@ class ImageSchema(BaseSchema):
 
     @pre_dump
     def encode_img(self, data, **kwargs):
-        img = getattr(data, "img")
-        if img:
-            data.base64 = base64.b64encode(img)
+        if data:
+            img = getattr(data, "img")
+            if img:
+                data.base64 = base64.b64encode(img)
         return data
 
 
@@ -532,6 +520,7 @@ class UserSchema(BaseSchema):
             )
 
 
+# MANAGERS
 class BaseManager:
     name = None
 
@@ -541,6 +530,9 @@ class BaseManager:
 
 class AuthManager(BaseManager):
     name = "auth_manager"
+
+    def parse_token(self):
+        return token_parser.parse_args().get("token")
 
     def issue_token(self, subject):
         token = Token(sub=subject)
@@ -915,6 +907,20 @@ class CalendarManager(BaseManager):
         }
         return pags
 
+    def set_availability(self, data):
+        available = data.get("available")  # true/false
+        if available:
+            # smart create a new entry
+            return self.create_calendar(data)
+        calendar = CalendarSchema().load(data)
+        result = (
+            db.session.query(CalendarModel)
+            .filter_by(fk=calendar.fk, date=calendar.date, time=calendar.time)
+            .first()
+        )
+        if result:
+            return self.delete_calendar(result.pk)
+
 
 class UserManager(BaseManager):
     name = "user_manager"
@@ -966,14 +972,17 @@ class UserManager(BaseManager):
         session.update(UserSchema().dump(user))
         return user
 
+    def logout(self, **kwargs):
+        session.clear()
+        return True
 
-# Some relationships should be instantiated after all dependent models have been loaded
-# fmt: off
-# ProfileModel.user_fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
-# UserModel.profile = relationship("ProfileModel", back_populates="user", uselist=False)
-# ProfileModel.user = relationship("UserModel", back_populates="profile")
-# UserSchema.profile = fields.Nested(ProfileSchema, many=False)
-# fmt: on
+
+# ----------------------------------- #
+@app.errorhandler(Exception)
+def error(e):
+    print(e)
+    return Reply.error(error=e.__class__.__qualname__)
+
 
 # ----------------------------------- #
 @app.route("/", methods=["GET"])
@@ -1000,12 +1009,7 @@ def index():
 @app.route("/auth/register", methods=["POST"])
 def auth_register():
     user = user_manager.create_user(request.get_json())
-    subject = user_manager.login(request.get_json())
-    if subject is not None:
-        return Reply.success(
-            data=dict(token=auth_manager.issue_token(subject=subject.pk))
-        )
-    return Reply.error()
+    return issue_token()
 
 
 @app.route("/auth/login", methods=["POST"])
@@ -1013,9 +1017,14 @@ def issue_token():
     subject = user_manager.login(request.get_json())
     if subject is not None:
         return Reply.success(
-            data=dict(token=auth_manager.issue_token(subject=subject.pk))
+            data=dict(pk=subject.pk, token=auth_manager.issue_token(subject=subject.pk))
         )
-    return Reply.unauthorized()
+    return Reply.unauthorized(error="Unauthorized")
+
+
+@app.route("/auth/logout", methods=["POST"])
+def revoke_token():
+    return Reply.success(data=user_manager.logout())
 
 
 @app.route("/auth/validate", methods=["POST"])
@@ -1023,7 +1032,7 @@ def validate_token():
     token = token_parser.parse_args().get("token")
     if auth_manager.check_token(token):
         return Reply.success(data=True)
-    return Reply.unauthorized(data=False)
+    return Reply.unauthorized(data=False, error="Unauthorized")
 
 
 # ----------------------------------- #
@@ -1218,11 +1227,12 @@ def query_calendar():
     return Reply.success(data=calendar_manager.query_calendar(**kwargs))
 
 
-# ----------------------------------- #
-@app.route("/u/<int:pk>", methods=["GET"])
-def get_u(pk):
-    set_trace()
+@app.route("/calendar/availability", methods=["POST"])
+def set_availability():
+    return Reply.success(data=calendar_manager.set_availability(request.get_json()))
 
+
+# ----------------------------------- #
 
 # ----------------------------------- #
 if __name__ == "__main__":
@@ -1242,8 +1252,8 @@ if __name__ == "__main__":
     image_manager = ImageManager()
     calendar_manager = CalendarManager()
 
-    RESET = False
-    N = 1
+    RESET = True
+    N = 10
 
     with app.app_context() as ctx:
         if RESET:
@@ -1257,11 +1267,11 @@ if __name__ == "__main__":
                 user_manager.create_user(user)
             pprint(user_manager.read_user(pk=1))
 
-            # with open("./data/messages.json", "r") as file:
-            #     messages = json.load(file)
-            #     messages = messages[:N]
-            # for i, message in tqdm(enumerate(messages), desc="Loading messages"):
-            #     message_manager.create_message(message)
+            with open("./data/messages.json", "r") as file:
+                messages = json.load(file)
+                messages = messages[:N]
+            for i, message in tqdm(enumerate(messages), desc="Loading messages"):
+                message_manager.create_message(message)
 
             # with open("./data/locations.json", "r") as file:
             #     locations = json.load(file)
@@ -1291,4 +1301,4 @@ if __name__ == "__main__":
         print("🟢 Interactive Mode")
     else:
         print("🔴 Non-interactive Mode")
-        app.run(host="0.0.0.0", port=4000, debug=False, use_reloader=False)
+        app.run(host="0.0.0.0", port=4000, debug=True, use_reloader=False)

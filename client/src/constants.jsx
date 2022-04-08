@@ -8,3 +8,5 @@ export const ROUTES = {
   CHAT: "/chat",
   SEARCH: "/search",
 };
+
+export const API = `http://192.168.1.114:4000`;

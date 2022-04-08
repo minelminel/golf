@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import { ShoppingCart, Coffee, CloudRain, UserPlus, Mail } from "react-feather";
 // import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 
+import { API } from "../../constants";
 import { Model } from "./model";
 
 const state = {
@@ -92,7 +93,7 @@ const Profile = () => {
           <Col className="text-center">
             <div className="frame mb-3">
               <img
-                src="http://192.168.1.114:4000/images/1"
+                src={`${API}/images/1`}
                 className="cropped"
                 style={{
                   width: "124px",

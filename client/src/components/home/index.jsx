@@ -13,6 +13,7 @@ import {
   Carousel,
   Spinner,
 } from "react-bootstrap";
+import { API } from "../../constants";
 
 const Home = ({ notify, ready, handleLoginOrRegister = () => {} }) => {
   const submit = (e) => {
@@ -35,7 +36,7 @@ const Home = ({ notify, ready, handleLoginOrRegister = () => {} }) => {
         e.target[value]?.value,
       ])
     );
-    fetch(`http://localhost:4000/auth/${source}`, {
+    fetch(`${API}/auth/${source}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -56,13 +57,8 @@ const Home = ({ notify, ready, handleLoginOrRegister = () => {} }) => {
     <>
       <Container>
         <Row>
-          <Col className="text-center">
-            <Carousel
-              variant="light"
-              style={{
-                height: "300px",
-              }}
-            >
+          <Col className="text-center mb-3">
+            <Carousel variant="light">
               <Carousel.Item>
                 <img
                   className="d-block w-100"

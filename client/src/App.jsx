@@ -28,14 +28,10 @@ const view = [
 ][3];
 
 function App() {
-  const [authenticated, setAuthenticated] = React.useState(false);
   const [state, setState] = React.useState({
     // AUTHENTICATION
     auth: {
-      data: {
-        token:
-          "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOjEwNiwiYXVkIjpudWxsLCJleHAiOjE2NDkwODE4MzkzMDIsIm5iZiI6MTY0OTA3ODIzOTMwMiwiaWF0IjoxNjQ5MDc4MjM5MzAyLCJqdGkiOm51bGx9.0DoN63E3M0OziVsIKyYl7MFrFo5Un8dvuJTKURpa5fo",
-      },
+      data: null,
       error: null,
       ready: true,
     },
@@ -91,6 +87,7 @@ function App() {
       ready: false,
     },
   });
+  const [authenticated, setAuthenticated] = React.useState(false);
 
   const notify = (e) => {
     toast(e);
@@ -99,11 +96,21 @@ function App() {
   const handleLoginOrRegister = ({ data, error, ready = true }) => {
     // store token for session
     console.log(data, error, ready);
+    if (error) {
+      notify(`Login Failed`);
+    } else {
+      notify(`Login Succeeded`);
+      setAuthenticated(true);
+    }
     setState({ ...state, auth: { data, error, ready } });
   };
 
   console.log(`~ s t a t e ~`);
   console.log(state);
+  console.log(`authenticated`, authenticated);
+
+  // view = !authenticated ? "Home" : view;
+  // console.log(view);
 
   return (
     <>
@@ -113,7 +120,7 @@ function App() {
             // xs
             xl={5}
             lg={7}
-            md={9}
+            md={8}
             sm={11}
             className="shadow"
             style={{

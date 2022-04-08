@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import { ListGroup, Badge } from "react-bootstrap";
 import { Model } from "./model";
 
+import { API } from "../../constants";
 import { formatTimeSince } from "../../utils";
 
 const state = {
@@ -29,7 +30,7 @@ const Message = (props) => {
         <img
           alt={`${ours ? props.dst.username : props.src.username}`}
           title={`/images/${ours ? props.dst.username : props.src.username}`}
-          src="http://192.168.1.114:4000/images/1"
+          src={`${API}/images/1`}
           className="cropped"
           style={{
             width: "36px",
