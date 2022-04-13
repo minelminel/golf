@@ -21,6 +21,9 @@ LOCATION_RADIUS = 25  # miles
 SRID = 4326
 METERS_IN_MILE = 1609.344
 
+import logging
+from logging.config import dictConfig
+import math
 import base64
 import hashlib
 import sys
@@ -28,11 +31,17 @@ import datetime
 from pdb import set_trace
 import time
 import json
+import random
 from tqdm import tqdm
 from pprint import pprint
 from functools import wraps
 from types import SimpleNamespace
+from io import BytesIO
+import itertools
 
+
+import numpy as np
+from PIL import Image
 import jwt
 from sqlalchemy import and_, func
 from flask_cors import CORS
@@ -85,6 +94,7 @@ def dump_date(dt):
     return datetime.datetime.strftime(dt, "%Y-%m-%d")
 
 
+LOCALHOST = "http://192.168.1.114:4000"
 SVC = SimpleNamespace(
     **{
         "auth": True,
@@ -97,6 +107,7 @@ SVC = SimpleNamespace(
     }
 )
 
+log = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 # api = Api()
@@ -104,9 +115,9 @@ db = SQLAlchemy()
 ma = Marshmallow()
 
 # fmt: off
-token_parser = reqparse.RequestParser()
-token_parser.add_argument("TOKEN", location="headers", dest="token", type=str, default=None)
-token_parser.add_argument("PK", location="headers", dest="pk", type=int, default=None)
+auth_parser = reqparse.RequestParser()
+auth_parser.add_argument("TOKEN", location="headers", dest="token", type=str, default=None)
+auth_parser.add_argument("PK", location="headers", dest="pk", type=int, default=None)
 
 pagination_parser = reqparse.RequestParser()
 pagination_parser.add_argument("page", location="args", type=int, default=PAGINATION_PAGE)
@@ -276,14 +287,27 @@ class EventModel(BaseModel):
     payload = db.Column(db.String(), unique=False, nullable=True)
 
 
+class NetworkModel(BaseModel):
+    __tablename__ = "networks"
+    src_fk = db.Column(
+        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
+    )
+    dst_fk = db.Column(
+        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
+    )
+    src = relationship("UserModel", foreign_keys=[src_fk], uselist=False, lazy="select")
+    dst = relationship("UserModel", foreign_keys=[dst_fk], uselist=False, lazy="select")
+
+
 class ProfileModel(BaseModel):
     __tablename__ = "profiles"
     alias = db.Column(db.String(), nullable=True, unique=False)
     bio = db.Column(db.String(), nullable=True, unique=False)
     age = db.Column(db.Integer(), nullable=True, unique=False)
     handicap = db.Column(db.Float(), nullable=True, unique=False)
-    drinking = db.Column(db.Boolean(), nullable=True, unique=False)
-    ridewalk = db.Column(db.Integer(), nullable=True, unique=False)
+    drinking = db.Column(db.Integer(), nullable=True, unique=False)
+    mobility = db.Column(db.Integer(), nullable=True, unique=False)
+    weather = db.Column(db.Integer(), nullable=True, unique=False)
 
     fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
     user = relationship("UserModel", back_populates="profile")
@@ -300,19 +324,25 @@ class LocationModel(BaseModel):
 
 class ImageModel(BaseModel):
     __tablename__ = "images"
-    img = db.Column(db.LargeBinary(), nullable=False, unique=False)
+    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
+    img = db.Column(db.String(), nullable=False, unique=False)
+
+    user = relationship("UserModel", back_populates="image")
 
 
 class MessageModel(BaseModel):
     __tablename__ = "messages"
+    body = db.Column(db.String(), nullable=False, unique=False)
+    read = db.Column(db.Boolean(), nullable=False, unique=False, default=False)
     src_fk = db.Column(
         db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
     )
     dst_fk = db.Column(
         db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
     )
-    body = db.Column(db.String(), nullable=False, unique=False)
-    read = db.Column(db.Boolean(), nullable=False, unique=False, default=False)
+
+    src = relationship("UserModel", foreign_keys=[src_fk], uselist=False, lazy="select")
+    dst = relationship("UserModel", foreign_keys=[dst_fk], uselist=False, lazy="select")
 
 
 class CalendarModel(BaseModel):
@@ -334,7 +364,15 @@ class UserModel(BaseModel):
     profile = relationship("ProfileModel", uselist=False, back_populates="user")
     location = relationship("LocationModel", uselist=False, back_populates="user")
     calendar = relationship("CalendarModel", back_populates="user")
-    # image = relationship("ImageModel", uselist=False, back_populates="user")
+    image = relationship("ImageModel", uselist=False, back_populates="user")
+
+    # following = relationship("NetworkModel", back_populates="src")
+    # followers = relationship("NetworkModel", back_populates="dst")
+
+    # src_messages = relationship(
+    #     "MessageModel", back_populates="src", uselist=False, lazy="select"
+    # )
+    # dst_messages = relationship("MessageModel", back_populates="dst")
 
     def hash_password(self, password):
         self.password = password_context.encrypt(password)
@@ -410,7 +448,7 @@ class ProfileSchema(BaseSchema):
             "age",
             "handicap",
             "drinking",
-            "ridewalk",
+            "mobility",
         )
 
     # fk = fields.Int(required=True, allow_none=False)
@@ -422,8 +460,9 @@ class ProfileSchema(BaseSchema):
         required=False, allow_none=True, validate=validate.Range(min=1, max=100)
     )
     handicap = fields.Float(required=False, allow_none=True)
-    drinking = fields.Boolean(required=False, allow_none=True)
-    ridewalk = fields.Integer(required=False, allow_none=True)
+    drinking = fields.Integer(required=False, allow_none=True)
+    mobility = fields.Integer(required=False, allow_none=True)
+    weather = fields.Integer(required=False, allow_none=True)
 
 
 class GeoField(fields.Field):
@@ -431,6 +470,7 @@ class GeoField(fields.Field):
         return json.loads(geojson.dumps(shapely.wkb.loads(str(value), True)))
 
     def _deserialize(self, value, attr, data, **kwargs):
+        # FIXME
         return str(shape(value))
 
 
@@ -453,27 +493,16 @@ class ImageSchema(BaseSchema):
     class Meta(BaseSchema.Meta):
         model = ImageModel
 
-    img = fields.Raw(allow_none=False, required=True)
-    base64 = fields.Str(dump_only=True)
+    fk = fields.Int(required=True, allow_none=False)
+    img = fields.Str(allow_none=False, required=True)
 
-    @pre_dump
-    def encode_img(self, data, **kwargs):
-        if data:
-            img = getattr(data, "img")
-            if img:
-                data.base64 = base64.b64encode(img)
+    @post_dump
+    def make_href(self, data, **kwargs):
+        pk = data.get("pk")
+        if pk is not None:
+            href = f"{LOCALHOST}/images/img/{pk}"
+            data.update(href=href)
         return data
-
-
-class MessageSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = MessageModel
-        editable = ("read",)
-
-    src_fk = fields.Int(required=True, allow_none=False)
-    dst_fk = fields.Int(required=True, allow_none=False)
-    body = fields.Str(required=True, allow_none=False)
-    read = fields.Bool(required=False, allow_none=False)
 
 
 class CalendarSchema(BaseSchema):
@@ -497,17 +526,22 @@ class UserSchema(BaseSchema):
         required=True, allow_none=False, validate=validate.Length(min=3, max=32)
     )
     email = fields.Str(
-        required=True, allow_none=False, validate=validate.Length(min=3, max=32)
+        required=True,
+        load_only=True,
+        allow_none=False,
+        validate=validate.Length(min=3, max=32),
     )
     password = fields.Str(
-        load_only=True,
         required=True,
+        load_only=True,
         allow_none=False,
         validate=validate.Length(max=128),
     )
     profile = fields.Nested(ProfileSchema, many=False)
     location = fields.Nested(LocationSchema, many=False)
     calendar = fields.Nested(CalendarSchema, many=True)
+    image = fields.Nested(ImageSchema, many=False)
+    # network = fields.Nested(NetworkSchema, many=True)
 
     @validates("username")
     def validate_username(self, data, **kwargs):
@@ -518,6 +552,52 @@ class UserSchema(BaseSchema):
             raise ValidationError(
                 f"Username contains non-allowable characters: {set(data).difference(ALLOWABLE_CHARACTERS)}"
             )
+
+
+class MessageSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = MessageModel
+        editable = ("read",)
+
+    src_fk = fields.Int(required=True, allow_none=False)
+    dst_fk = fields.Int(required=True, allow_none=False)
+    body = fields.Str(required=True, allow_none=False)
+    read = fields.Bool(required=False, allow_none=False)
+
+    src = fields.Nested(
+        UserSchema,
+        exclude=(
+            "calendar",
+            "location",
+            "profile",
+        ),
+        many=False,
+    )
+    dst = fields.Nested(
+        UserSchema,
+        exclude=(
+            "calendar",
+            "location",
+            "profile",
+        ),
+        many=False,
+    )
+
+
+class NetworkSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = NetworkModel
+
+    src_fk = fields.Int(required=True, allow_none=False)
+    dst_fk = fields.Int(required=True, allow_none=False)
+    src = fields.Nested(
+        UserSchema,
+        many=False,
+    )
+    dst = fields.Nested(
+        UserSchema,
+        many=False,
+    )
 
 
 # MANAGERS
@@ -532,7 +612,7 @@ class AuthManager(BaseManager):
     name = "auth_manager"
 
     def parse_token(self):
-        return token_parser.parse_args().get("token")
+        return auth_parser.parse_args().get("token")
 
     def issue_token(self, subject):
         token = Token(sub=subject)
@@ -609,6 +689,7 @@ class ProfileManager(BaseManager):
 
     def create_profile(self, data):
         profile = ProfileSchema().load(data)
+        set_trace()
         db.session.add(profile)
         db.session.commit()
         return ProfileSchema().dump(profile)
@@ -698,17 +779,17 @@ class LocationManager(BaseManager):
 class ImageManager(BaseManager):
     name = "image_manager"
 
-    def create_image(self, data, exclude=None):
+    def create_image(self, data):
         image = ImageSchema().load(data)
         db.session.add(image)
         db.session.commit()
-        return ImageSchema(exclude=exclude).dump(image)
+        return ImageSchema().dump(image)
 
     def read_image(self, pk):
         image = db.session.query(ImageModel).filter_by(pk=pk).first()
         return ImageSchema().dump(image)
 
-    def update_image(self, pk, patches, exclude=None):
+    def update_image(self, pk, patches):
         image = db.session.query(ImageModel).filter_by(pk=pk).first()
         [
             setattr(image, key, value)
@@ -716,7 +797,7 @@ class ImageManager(BaseManager):
             if key in ImageSchema.Meta.editable
         ]
         db.session.commit()
-        return ImageSchema(exclude=exclude).dump(image)
+        return ImageSchema().dump(image)
 
     def delete_image(self, pk):
         image = db.session.query(ImageModel).filter_by(pk=pk).first()
@@ -727,6 +808,32 @@ class ImageManager(BaseManager):
 
 class MessageManager(BaseManager):
     name = "message_manager"
+
+    @classmethod
+    def get_conversation_pairs(cls, fk):
+        # [(3, 1), (1, 2)]
+        #   [(1, 2), (2, 1)]
+        #   [(1, 3), (3, 1)]
+        records = db.engine.execute(
+            f"""
+            SELECT t1.src_fk, t1.dst_fk
+            FROM messages t1
+            EXCEPT
+            SELECT t1.src_fk, t1.dst_fk
+            FROM messages t1
+            INNER JOIN messages t2
+            ON t1.src_fk = t2.dst_fk AND t1.dst_fk = t2.src_fk
+            AND t1.src_fk > t1.dst_fk
+            WHERE t1.src_fk = {fk}
+            OR t1.dst_fk = {fk}
+            OR t2.src_fk = {fk}
+            OR t2.dst_fk = {fk};
+            """.format(
+                fk=fk
+            )
+        )
+        # FIXME: until we can port this to native query, this blows up at scale
+        return [(a, b) for a, b in records if fk in (a, b)]  # exhaustible iterable
 
     def create_message(self, data):
         message = MessageSchema().load(data)
@@ -755,36 +862,14 @@ class MessageManager(BaseManager):
 
     def get_conversations(self, fk, page=0, size=10):
         # return the most recent message from each conversation
-        # [(3, 1), (1, 2)]
-        #   [(1, 2), (2, 1)]
-        #   [(1, 3), (3, 1)]
-        records = db.engine.execute(
-            f"""
-            SELECT t1.src_fk, t1.dst_fk
-            FROM messages t1
-            EXCEPT
-            SELECT t1.src_fk, t1.dst_fk
-            FROM messages t1
-            INNER JOIN messages t2
-            ON t1.src_fk = t2.dst_fk AND t1.dst_fk = t2.src_fk
-            AND t1.src_fk > t1.dst_fk
-            WHERE t1.src_fk = {fk}
-            OR t1.dst_fk = {fk}
-            OR t2.src_fk = {fk}
-            OR t2.dst_fk = {fk};
-            """.format(
-                fk=fk
-            )
-        )
-        # FIXME: until we can port this to native query, this blows up at scale
         messages = list()
-        for (a, b) in records:
+        for (a, b) in self.get_conversation_pairs(fk=fk):
             message = (
                 db.session.query(MessageModel)
                 .filter(
                     or_(
-                        (MessageModel.src_fk == a) | (MessageModel.dst_fk == b),
-                        (MessageModel.src_fk == b) | (MessageModel.dst_fk == a),
+                        (MessageModel.src_fk == a) & (MessageModel.dst_fk == b),
+                        (MessageModel.src_fk == b) & (MessageModel.dst_fk == a),
                     )
                 )
                 .order_by(MessageModel.created_at.desc())
@@ -796,6 +881,7 @@ class MessageManager(BaseManager):
         pages = total // size
         # messages = q.limit(size).offset(page * size)
         messages = messages[page * size : (page * size) + size]
+        # content = MessageSchema(many=True).dump(messages)
         content = MessageSchema(many=True).dump(messages)
         pags = {
             "content": content,
@@ -815,14 +901,18 @@ class MessageManager(BaseManager):
             db.session.query(MessageModel)
             .filter(
                 or_(
-                    ((MessageModel.src_fk == src_fk) | (MessageModel.dst_fk == dst_fk)),
-                    ((MessageModel.src_fk == dst_fk) | (MessageModel.dst_fk == src_fk)),
+                    ((MessageModel.src_fk == src_fk) & (MessageModel.dst_fk == dst_fk)),
+                    ((MessageModel.src_fk == dst_fk) & (MessageModel.dst_fk == src_fk)),
                 )
             )
             .order_by(MessageModel.created_at.desc())
         )
-        src = user_manager.read_user(src_fk)
-        dst = user_manager.read_user(dst_fk)
+        src = user_manager.read_user(
+            src_fk, exclude=["calendar", "profile", "location"]
+        )
+        dst = user_manager.read_user(
+            dst_fk, exclude=["calendar", "profile", "location"]
+        )
         total = q.count()
         pages = q.count() // size
         messages = q.limit(size).offset(page * size)
@@ -842,6 +932,22 @@ class MessageManager(BaseManager):
             },
         }
         return pags
+
+    def get_notifications(self, pk) -> int:
+        notifications = 0
+        for (a, b) in self.get_conversation_pairs(fk=pk):
+            src_fk = [a, b][a == pk]
+            dst_fk = [a, b][b == pk]
+            notifs = (
+                db.session.query(MessageModel)
+                .filter(
+                    (MessageModel.src_fk == src_fk) & (MessageModel.dst_fk == dst_fk)
+                )
+                .filter_by(read=False)
+                .count()
+            )
+            notifications += 1 if notifs else 0
+        return notifications
 
 
 class CalendarManager(BaseManager):
@@ -932,9 +1038,12 @@ class UserManager(BaseManager):
         db.session.commit()
         return UserSchema().dump(user)
 
-    def read_user(self, pk):
+    def read_user(self, pk, exclude=None, only=None):
         user = db.session.query(UserModel).filter_by(pk=pk).first()
-        return UserSchema().dump(user)
+        kwargs = dict(
+            list(filter(lambda pair: pair[1], dict(only=only, exclude=exclude).items()))
+        )
+        return UserSchema(**kwargs).dump(user)
 
     def update_user(self, pk, patches):
         user = db.session.query(UserModel).filter_by(pk=pk).first()
@@ -977,6 +1086,99 @@ class UserManager(BaseManager):
         return True
 
 
+class NetworkManager(BaseManager):
+    def create_network(self, data):
+        network = NetworkSchema().load(data)
+        db.session.add(network)
+        db.session.commit()
+        return NetworkSchema().dump(network)
+
+    def read_network(self, pk):
+        network = db.session.query(NetworkModel).filter_by(pk=pk).first()
+        return NetworkSchema().dump(network)
+
+    def update_network(self, pk, patches):
+        network = db.session.query(NetworkModel).filter_by(pk=pk).first()
+        [
+            setattr(network, key, value)
+            for key, value in patches.items()
+            if key in NetworkSchema.Meta.editable
+        ]
+        db.session.commit()
+        return NetworkSchema().dump(network)
+
+    def delete_network(self, pk):
+        network = db.session.query(NetworkModel).filter_by(pk=pk).first()
+        db.session.delete(network)
+        db.session.commit()
+        return True
+
+    def get_followers(self, pk, page=0, size=10):
+        q = db.session.query(NetworkModel).filter_by(dst_fk=pk)
+
+        total = q.count()
+        pages = total // size
+
+        networks = q.limit(size).offset(page * size)
+        content = NetworkSchema(many=True).dump(networks)
+        pags = {
+            "content": content,
+            "metadata": {
+                "page": page,
+                "size": size,
+                "pages": pages,
+                "total": total,
+                "checksum": checksum(content),
+            },
+        }
+        return pags
+
+    def get_following(self, pk, page=0, size=10):
+        q = db.session.query(NetworkModel).filter_by(src_fk=pk)
+
+        total = q.count()
+        pages = total // size
+
+        networks = q.limit(size).offset(page * size)
+        content = NetworkSchema(many=True).dump(networks)
+        pags = {
+            "content": content,
+            "metadata": {
+                "page": page,
+                "size": size,
+                "pages": pages,
+                "total": total,
+                "checksum": checksum(content),
+            },
+        }
+        return pags
+
+    def follow(self, src_fk, dst_fk):
+        network = (
+            db.session.query(NetworkModel)
+            .filter_by(src_fk=src_fk, dst_fk=dst_fk)
+            .first()
+        )
+        if network:
+            return NetworkSchema().dump(network)
+        network = NetworkSchema().load(dict(src_fk=src_fk, dst_fk=dst_fk))
+        db.session.add(network)
+        db.session.commit()
+        return NetworkSchema().dump(network)
+
+    def unfollow(self, src_fk, dst_fk):
+        network = (
+            db.session.query(NetworkModel)
+            .filter_by(src_fk=src_fk, dst_fk=dst_fk)
+            .first()
+        )
+        if network:
+            db.session.delete(network)
+            db.session.commit()
+            return True
+        return False
+
+
 # ----------------------------------- #
 @app.errorhandler(Exception)
 def error(e):
@@ -1005,6 +1207,11 @@ def index():
     }
 
 
+@app.route("/favicon.ico")
+def favicon():
+    return Reply.plain(data=None)
+
+
 # ----------------------------------- #
 @app.route("/auth/register", methods=["POST"])
 def auth_register():
@@ -1029,7 +1236,7 @@ def revoke_token():
 
 @app.route("/auth/validate", methods=["POST"])
 def validate_token():
-    token = token_parser.parse_args().get("token")
+    token = auth_parser.parse_args().get("token")
     if auth_manager.check_token(token):
         return Reply.success(data=True)
     return Reply.unauthorized(data=False, error="Unauthorized")
@@ -1174,30 +1381,36 @@ def get_conversation(src_fk, dst_fk):
 
 
 # ----------------------------------- #
+@app.route("/notifications/<int:pk>", methods=["POST"])
+def get_notifications(pk):
+    return Reply.success(message_manager.get_notifications(pk))
+
+
+# ----------------------------------- #
 @app.route("/images", methods=["POST"])
 def create_image():
-    return Reply.success(
-        data=image_manager.create_image({"img": request.data}, exclude=["img"])
-    )
+    return Reply.success(data=image_manager.create_image(request.get_json()))
 
 
 @app.route("/images/<int:pk>", methods=["GET"])
 def read_image(pk):
-    # DEV:
-    image = image_manager.read_image(pk=1)
-    return Reply.plain(data=image.get("img"), dtype="image/png")
+    return Reply.success(data=image_manager.read_image(pk=pk))
 
 
 @app.route("/images/<int:pk>", methods=["PATCH"])
 def update_image(pk):
-    return Reply.success(
-        data=image_manager.update_image(pk, request.get_json(), exclude=["img"])
-    )
+    return Reply.success(data=image_manager.update_image(pk, request.get_json()))
 
 
 @app.route("/images/<int:pk>", methods=["DELETE"])
 def delete_image(pk):
     return Reply.success(data=image_manager.delete_image(pk))
+
+
+@app.route("/images/img/<int:pk>", methods=["GET"])
+def serve_image(pk):
+    image = image_manager.read_image(pk=pk)
+    return Reply.plain(data=base64.b64decode(image.get("img")), dtype="image/png")
 
 
 # ----------------------------------- #
@@ -1233,9 +1446,69 @@ def set_availability():
 
 
 # ----------------------------------- #
+@app.route("/network", methods=["POST"])
+def create_network():
+    # TODO: fail if exists
+    return Reply.success(data=network_manager.create_network(request.get_json()))
+
+
+@app.route("/network/<int:pk>", methods=["GET"])
+def read_network(pk):
+    return Reply.success(data=network_manager.read_network(pk))
+
+
+@app.route("/network/<int:pk>", methods=["PATCH"])
+def update_network(pk):
+    return Reply.success(data=network_manager.update_network(pk, request.get_json()))
+
+
+@app.route("/network/<int:pk>", methods=["DELETE"])
+def delete_network(pk):
+    return Reply.success(data=network_manager.delete_network(pk))
+
+
+@app.route("/network/followers/<int:pk>", methods=["POST"])
+def network_followers(pk):
+    pags = pagination_parser.parse_args()
+    return Reply.success(data=network_manager.get_followers(pk, **pags))
+
+
+@app.route("/network/following/<int:pk>", methods=["POST"])
+def network_following(pk):
+    return Reply.success(data=network_manager.get_following(pk))
+
 
 # ----------------------------------- #
 if __name__ == "__main__":
+    dictConfig(
+        {
+            "version": 1,
+            "formatters": {
+                "default": {
+                    "format": "%(asctime)s - %(levelname)s - %(message)s",
+                    "datefmt": "%Y-%m-%d %H:%M:%S",
+                }
+            },
+            "handlers": {
+                "console": {
+                    "level": "DEBUG",
+                    "class": "logging.StreamHandler",
+                    "formatter": "default",
+                    "stream": "ext://sys.stdout",
+                },
+                "file": {
+                    "level": "DEBUG",
+                    "class": "logging.handlers.RotatingFileHandler",
+                    "formatter": "default",
+                    "filename": "/dev/null",
+                    "maxBytes": 1024,
+                    "backupCount": 3,
+                },
+            },
+            "loggers": {"": {"level": "DEBUG", "handlers": ["console", "file"]}},
+            "disable_existing_loggers": False,
+        }
+    )
     config = Config()
     app.config.from_object(config)
     # api.init_app(app)
@@ -1251,33 +1524,146 @@ if __name__ == "__main__":
     message_manager = MessageManager()
     image_manager = ImageManager()
     calendar_manager = CalendarManager()
+    network_manager = NetworkManager()
 
     RESET = True
-    N = 10
+    N = 20
 
     with app.app_context() as ctx:
         if RESET:
             db.drop_all()
             db.create_all()
 
-            with open("./data/users.json", "r") as file:
-                users = json.load(file)
-                users = users[:N]
-            for i, user in tqdm(enumerate(users), desc="Loading users"):
-                user_manager.create_user(user)
-            pprint(user_manager.read_user(pk=1))
+            if N > 0:
+                # USERS
+                with open("./data/users.json", "r") as file:
+                    users = json.load(file)
+                    users = users[:N]
+                for i, user in tqdm(
+                    enumerate(users), total=len(users), desc="Loading users"
+                ):
+                    trans = UserModel(**user)
+                    db.session.add(trans)
+                    db.session.commit()
+                # pprint(user_manager.read_user(pk=1))
 
-            with open("./data/messages.json", "r") as file:
-                messages = json.load(file)
-                messages = messages[:N]
-            for i, message in tqdm(enumerate(messages), desc="Loading messages"):
-                message_manager.create_message(message)
+                # PROFILES
+                with open("./data/profiles.json", "r") as file:
+                    profiles = json.load(file)
+                    profiles = profiles[:N]
+                for i, profile in tqdm(
+                    enumerate(profiles), total=len(profiles), desc="Loading profiles"
+                ):
+                    trans = ProfileModel(**profile)
+                    db.session.add(trans)
+                    db.session.commit()
+                # pprint(profile_manager.read_profile(pk=1))
 
-            # with open("./data/locations.json", "r") as file:
-            #     locations = json.load(file)
-            #     locations = locations[:N]
-            # for i, location in tqdm(enumerate(locations), desc="Loading locations"):
-            #     location_manager.create_location({**location, "fk": i + 1})
+                # MESSAGES
+                with open("./data/messages.json", "r") as file:
+                    messages = json.load(file)
+                for i, message in tqdm(
+                    enumerate(messages), total=len(messages), desc="Loading messages"
+                ):
+                    src_fk, dst_fk = random.sample(range(1, N + 1), 2)
+                    message.update(src_fk=src_fk, dst_fk=dst_fk)
+                    trans = MessageModel(**message)
+                    db.session.add(trans)
+                    db.session.commit()
+                # pprint(message_manager.read_message(pk=1))
+
+                # IMAGES
+                for i in tqdm(range(N), desc="Loading images"):
+                    array = np.stack(
+                        [np.full((300, 300), random.randint(0, 255)) for _ in range(3)],
+                        axis=2,
+                    )
+                    img = Image.fromarray(array.astype("uint8"))
+                    # im.show()
+                    buffer = BytesIO()
+                    img.save(buffer, format="PNG")
+                    myimage = buffer.getvalue()
+                    image = dict(
+                        fk=i + 1, img=base64.b64encode(myimage).decode("utf-8")
+                    )
+                    trans = ImageModel(**image)
+                    db.session.add(trans)
+                    db.session.commit()
+
+                # LOCATIONS
+                with open("./data/locations.json", "r") as file:
+                    locations = json.load(file)
+                    locations = locations[:N]
+                for i, location in tqdm(
+                    enumerate(locations), total=len(locations), desc="Loading locations"
+                ):
+                    lon, lat = location["location"]["coordinates"]
+                    point = f"POINT({lon} {lat})"
+                    location.update(location=point)
+                    trans = LocationModel(**location)
+                    db.session.add(trans)
+                    db.session.commit()
+                # pprint(location_manager.read_location(pk=1))
+
+                # NETWORKS
+                networks = list()
+                for a, b in tqdm(
+                    itertools.combinations(range(1, N + 1), 2),
+                    total=int(
+                        # n choose k
+                        math.factorial(N)
+                        / (math.factorial(N - 2) * math.factorial(2))
+                    ),
+                    desc="Loading networks:",
+                ):
+                    outcome = random.randint(0, 3)
+                    if outcome == 3:
+                        # dual connection
+                        data = dict(
+                            src_fk=a,
+                            dst_fk=b,
+                        )
+                        network = network_manager.create_network(data)
+                        networks.append(network)
+                        data = dict(
+                            src_fk=b,
+                            dst_fk=a,
+                        )
+                        network = network_manager.create_network(data)
+                        networks.append(network)
+                    elif outcome == 2:
+                        # ltr
+                        data = dict(
+                            src_fk=a,
+                            dst_fk=b,
+                        )
+                        network = network_manager.create_network(data)
+                        networks.append(network)
+                    elif outcome == 1:
+                        # rtl
+                        data = dict(
+                            src_fk=b,
+                            dst_fk=a,
+                        )
+                        network = network_manager.create_network(data)
+                        networks.append(network)
+                    else:
+                        pass
+
+                # CALENDARS
+                calendars = list()
+                for i in tqdm(range(1, N + 1), desc="Loading calendars:"):
+                    today = load_date(dump_date(datetime.datetime.now()))
+                    for d in range(7):
+                        # do sample
+                        outcome = random.choice([0, 1, 2, 3])
+                        if outcome:
+                            calendar = calendar_manager.create_calendar(
+                                dict(date=dump_date(today), time=outcome, fk=i)
+                            )
+                            calendars.append(calendar)
+                        today += datetime.timedelta(days=1)
+
         else:
             db.create_all()
 
@@ -1295,10 +1681,14 @@ if __name__ == "__main__":
         # pprint(MessageSchema(many=True).dump(db.session.query(MessageModel).all()))
         print("Locations:", db.session.query(LocationModel).count())
         # pprint(LocationSchema(many=True).dump(db.session.query(LocationModel).all()))
+        print("Networks:", db.session.query(NetworkModel).count())
+        # pprint(NetworkSchema(many=True).dump(db.session.query(NetworkModel).all()))
+        print("Calendars:", db.session.query(CalendarModel).count())
 
+    log.info("Done initializing data, starting server")
     # interactive mode
     if bool(getattr(sys, "ps1", sys.flags.interactive)):
-        print("🟢 Interactive Mode")
+        log.warning("🟢 Interactive Mode")
     else:
-        print("🔴 Non-interactive Mode")
+        log.warning("🔴 Non-interactive Mode")
         app.run(host="0.0.0.0", port=4000, debug=True, use_reloader=False)

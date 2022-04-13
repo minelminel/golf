@@ -9,4 +9,4 @@ export const ROUTES = {
   SEARCH: "/search",
 };
 
-export const API = `http://192.168.1.114:4000`;
+export const API = `http://localhost:4000`;

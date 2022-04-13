@@ -7,7 +7,7 @@
 body {
   margin: 0;
   overflow-y: overlay; /* fix vertical scrollbar offset */
-  /* background-color: #1b2127 !important; */
+  background-color: #171b20 !important;
   font-family: "Nunito", sans-serif !important;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -16,6 +16,25 @@ body {
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
     monospace;
+}
+
+/* Remove triangle from navigation dropdown */
+a.dropdown-toggle.nav-link::after {
+  display: none;
+}
+
+button:focus {
+  /* button group focus */
+}
+
+/* https://stackoverflow.com/a/40365806/12641958 */
+.leaflet-container {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.leaflet-default-icon-path {
+  background-image: url(https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png);
 }
 
 /* .shadow {

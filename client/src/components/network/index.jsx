@@ -11,9 +11,9 @@ import { v4 as uuidv4 } from "uuid";
 
 import { Model } from "./model";
 
-const Network = () => {
+const Network = (props) => {
   const [tab, setTab] = React.useState(`followers`); // followers
-  const props = { ...Model };
+  // const props = { ...Model };
   return (
     <>
       <Container>

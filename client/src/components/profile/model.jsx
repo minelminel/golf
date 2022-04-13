@@ -1,7 +1,7 @@
 export const Model = {
   profile: {
     handicap: 3.1,
-    ridewalk: 1,
+    mobility: 1,
     drinking: 1,
     weather: 2,
     prompts: [

@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { Container, Row, Col, Button } from "react-bootstrap";
 import { Send } from "react-feather";
 
-import { Model } from "./model";
+// import { Model } from "./model";
 import { API } from "../../constants";
 import { formatTimeSince } from "../../utils";
 
@@ -17,7 +17,7 @@ const state = {
 const SRC = 1;
 const DST = 2;
 
-const Bubble = (props) => {
+const ChatBubble = (props) => {
   const { timestamp = true } = props;
   const ours = props.src_fk === state.user.pk;
   return (
@@ -141,7 +141,21 @@ const Conversation = () => {
         loadChat(SRC, DST);
       });
   };
-  // const props = Model;
+
+  const WelcomeMessage = () => {
+    return (
+      <div
+        className="text-center text-muted"
+        style={{
+          fontSize: "small",
+          marginBottom: "0.5rem",
+        }}
+      >
+        Start of your conversation
+      </div>
+    );
+  };
+
   // get latest message sent by each party and show a timestamp for context
   const includeTimestampsFor = [
     props.content.find((element) => element.dst_fk === state.user.pk)?.pk,
@@ -151,19 +165,9 @@ const Conversation = () => {
   return (
     <>
       <Container>
-        {props.metadata.page === props.metadata.pages && (
-          <div
-            className="text-center text-muted"
-            style={{
-              fontSize: "small",
-              marginBottom: "0.5rem",
-            }}
-          >
-            Start of your conversation
-          </div>
-        )}
+        {props.metadata.page === props.metadata.pages && <WelcomeMessage />}
         {[...props.content].reverse().map((prop, i, row) => (
-          <Bubble
+          <ChatBubble
             key={uuidv4()}
             timestamp={includeTimestampsFor.includes(prop.pk)}
             {...prop}

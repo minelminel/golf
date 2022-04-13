@@ -1,5 +1,5 @@
 import React from "react";
-import { Container, Row, Col, Button } from "react-bootstrap";
+import { Container, Row, Col } from "react-bootstrap";
 
 import { API } from "../../constants";
 import { Model } from "../calendar/model";
@@ -7,13 +7,19 @@ import { Model } from "../calendar/model";
 // TODO: enum
 const slots = { 1: "Morning", 2: "Midday", 3: "Twilight" };
 
-const Availability = ({
+const CalendarCell = ({
   day = null,
   value = 0,
   available = true,
-  onClick = (date, time, available) => {},
+  onClick = () => {},
 }) => {
   const color = available ? "bg-primary" : "bg-light";
+
+  const handleClick = (e) => {
+    console.log(date, time, available);
+    onClick(date, time, !available);
+  };
+
   return (
     <div
       style={{
@@ -22,7 +28,7 @@ const Availability = ({
         borderRadius: "8px",
       }}
       className={`${color} shadow`}
-      onClick={onClick}
+      onClick={handleClick}
     ></div>
   );
 };
@@ -33,10 +39,10 @@ const Calendar = (props) => {
   const [semaphore, setSemaphore] = React.useState(0);
 
   React.useEffect(() => {
-    loadPage();
+    gofetch();
   }, [semaphore]);
 
-  const loadPage = () => {
+  const gofetch = () => {
     const url =
       `${API}/calendar/query?` +
       new URLSearchParams({
@@ -125,7 +131,7 @@ const Calendar = (props) => {
               </Col>
               {Object.entries(slots).map(([value, label], index) => (
                 <Col>
-                  <Availability
+                  <CalendarCell
                     day={day.date}
                     value={index + 1}
                     onClick={(e) =>

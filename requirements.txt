@@ -7,6 +7,9 @@ marshmallow-sqlalchemy
 psycopg2-binary
 flask-CORS
 
+numpy
+Pillow
+
 passlib
 pyjwt
 hashids

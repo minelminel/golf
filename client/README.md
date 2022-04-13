@@ -75,3 +75,29 @@ props = {
 3. UserModel column: `profile = relationship("ProfileModel", back_populates="user_fk", uselist=False)`
 
 4. UserSchema field: `profile = fields.Nested(ProfileSchema, many=False)`
+
+---
+
+# UI Workflows
+
+- login/logout
+- timeline
+- ***
+
+TODO:
+
+- full profile card
+- prompt q/a database (on hold, get profile working first)
+- mini profile card for listitem
+- calendar preview for profile card, handle default query behaviors like "do we only ever care about today to 7 days out"
+- map preview
+
+- location update workflow
+- profile update workflow
+- image update workflow
+- account reset/validate workflow
+  - is_validation_required
+  - check_validation_status
+  - handle link/token generation
+
+MOBILITY

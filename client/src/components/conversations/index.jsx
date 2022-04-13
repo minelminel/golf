@@ -77,8 +77,8 @@ const Message = (props) => {
   );
 };
 
-const Conversations = () => {
-  const props = Model;
+const Conversations = (props) => {
+  // const props = Model;
   return (
     <>
       {props.content.map((prop) => (

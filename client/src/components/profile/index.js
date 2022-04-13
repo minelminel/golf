@@ -15,7 +15,7 @@ const state = {
 };
 
 const Enums = {
-  ridewalk: {
+  mobility: {
     0: <ShoppingCart />,
     1: <ShoppingCart />,
     2: <ShoppingCart />,
@@ -167,7 +167,7 @@ const Profile = () => {
                       }}
                       key={uuidv4()}
                     >
-                      {Enums.ridewalk[props.profile.ridewalk]}
+                      {Enums.mobility[props.profile.mobility]}
                     </li>
                     <li
                       style={{
