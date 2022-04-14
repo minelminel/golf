@@ -2,12 +2,19 @@
 #root {
   min-height: 100vh;
   height: 100vh;
+  color: var(--bs-light);
+  /* background-color: #171b20 !important; */
+}
+
+.shadow {
+  /* extends bootstrap class */
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.35) !important;
 }
 
 body {
   margin: 0;
   overflow-y: overlay; /* fix vertical scrollbar offset */
-  background-color: #171b20 !important;
+  background-color: var(--bs-dark);
   /* font-family: "Nunito", sans-serif !important; */
   /* font-family: -apple-system, Helvetica; */
   -webkit-font-smoothing: antialiased;
@@ -22,10 +29,6 @@ code {
 /* Remove triangle from navigation dropdown */
 a.dropdown-toggle.nav-link::after {
   display: none;
-}
-
-button:focus {
-  /* button group focus */
 }
 
 /* https://stackoverflow.com/a/40365806/12641958 */
@@ -93,7 +96,10 @@ ul {
   border: 1px dashed royalblue;
 }
 
-li {
+.list-group-item {
+  background-color: inherit;
+  color: var(--bs-light);
+  border-bottom: 1px solid var(--bs-gray-700);
 }
 
 /* img {

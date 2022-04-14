@@ -887,7 +887,8 @@ class MessageManager(BaseManager):
                 .first()
             )
             messages.append(message)
-        # TODO: guarantee sort messages by timestamp
+        # guarantee sort messages by timestamp
+        messages.sort(key=lambda obj: obj.created_at, reverse=True)
         total = len(messages)
         pages = total // size
         # messages = q.limit(size).offset(page * size)

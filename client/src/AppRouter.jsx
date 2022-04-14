@@ -55,6 +55,7 @@ import {
 // END ICONS
 import { v4 as uuidv4 } from "uuid";
 import { ToastContainer, toast } from "react-toastify";
+import QRCode from "react-qr-code";
 
 import { formatTimeSince } from "./utils";
 
@@ -74,6 +75,7 @@ import {
 
 const CONST = {
   API: `http://192.168.1.114:4000`,
+  DEBUG: false,
 };
 
 const ROUTES = {
@@ -86,6 +88,7 @@ const ROUTES = {
   INBOX: "/inbox",
   CHAT: "/chat",
   SHARE: "/share",
+  SETTINGS: "/settings",
 };
 
 const ENUMS = {
@@ -170,6 +173,7 @@ const BannerBlock = (props) => {
       style={{
         borderRadius: "5px",
         padding: "0.5rem",
+        color: "black",
       }}
     >
       {text}
@@ -298,7 +302,8 @@ const LoginForm = (props) => {
   );
 };
 
-const CalendarCell = ({ available = true, onClick = () => {} }) => {
+const CalendarCell = (props) => {
+  const { available = true, onClick = () => {} } = props;
   const color = available ? "bg-primary" : "bg-light";
 
   return (
@@ -418,10 +423,9 @@ const ChatInput = (props) => {
       className="fixed-bottom"
       style={{
         margin: "0 auto",
-        // border: "2px solid purple",
-        // backgroundColor: "white",
-        backdropFilter: "blur(8px)",
+        backgroundColor: "var(--bs-dark)",
         height: "6rem",
+        width: "inherit",
       }}
     >
       <Col>
@@ -463,7 +467,8 @@ const CalendarDay = (props) => {
     <span
       style={{
         fontWeight: available ? `bolder` : `inherit`,
-        borderBottom: available ? "2px solid black" : "inherit",
+        textUnderlineOffset: "5px",
+        textDecoration: available ? "underline" : "none",
       }}
       className={available ? "fw-bold" : "text-muted"}
     >
@@ -612,9 +617,6 @@ const UserItem = (props) => {
     </ListGroup.Item>
   );
 };
-{
-  /* {JSON.stringify({ pk, username, profile, location, image }, null, 2)} */
-}
 
 const MapPanel = (props) => {
   const { distance, location = {} } = props;
@@ -700,8 +702,8 @@ const Navigation = (props) => {
       <Navbar
         className="mt-1 mb-3 shadow"
         expand="lg"
-        variant="light"
-        bg="light"
+        variant="dark"
+        bg="dark"
         sticky="top"
         style={{
           fontWeight: "bolder",
@@ -736,11 +738,10 @@ const Navigation = (props) => {
               <NavDropdown.Item onClick={() => navigate(ROUTES.INBOX)}>
                 Inbox
               </NavDropdown.Item>
-              {/* <NavDropdown.Item onClick={() => navigate(ROUTES.CHAT)}>
-                Chat
-              </NavDropdown.Item> */}
               <NavDropdown.Divider />
-              <NavDropdown.Item>Settings</NavDropdown.Item>
+              <NavDropdown.Item onClick={() => navigate(ROUTES.SETTINGS)}>
+                Settings
+              </NavDropdown.Item>
               <NavDropdown.Item onClick={resetAuth}>Log Out</NavDropdown.Item>
             </NavDropdown>
           ) : (
@@ -800,11 +801,13 @@ const Page = (props) => {
             lg={7}
             xl={5}
             className="shadow"
-            style={{
-              borderLeft: "1px solid #e7e7e7",
-              borderRight: "1px solid #e7e7e7",
-              backgroundColor: "var(--bs-light)",
-            }}
+            style={
+              {
+                // borderLeft: "1px solid #e7e7e7",
+                // borderRight: "1px solid #e7e7e7",
+                // backgroundColor: "var(--bs-light)",
+              }
+            }
           >
             <Navigation />
             {/* <h6 className="text-center text-muted">{title}</h6> */}
@@ -981,13 +984,13 @@ const TimelinePage = (props) => {
       </Row>
       <Row className="mb-3" style={{ height: "4rem" }}>
         <Col className="d-grid">
-          <Button variant="dark" onClick={() => navigate(ROUTES.SEARCH)}>
+          <Button variant="secondary" onClick={() => navigate(ROUTES.SEARCH)}>
             <Search />
             &nbsp;<small>Search</small>
           </Button>
         </Col>
         <Col className="d-grid">
-          <Button variant="secondary" onClick={() => navigate(ROUTES.SHARE)}>
+          <Button variant="light" onClick={() => navigate(ROUTES.SHARE)}>
             <Share />
             &nbsp;<small>Share</small>
           </Button>
@@ -1004,6 +1007,8 @@ const UserPage = (props) => {
   const { auth, isAuthed } = useContext(AuthContext);
   const [state, setState] = useState(requestProps);
   const { pk } = useParams();
+
+  const navigate = useNavigate();
 
   const between = "1rem";
 
@@ -1060,6 +1065,7 @@ const UserPage = (props) => {
           height: "3rem",
         }}
         className="shadow"
+        onClick={() => navigate(ROUTES.SETTINGS)}
       >
         Edit
       </Button>
@@ -1113,13 +1119,14 @@ const UserPage = (props) => {
                     justifyContent: "center",
                     alignItems: "center",
                     position: "absolute",
-                    transform: "translate(60%, -60%)",
+                    transform: "translate(70%, -50%)",
                     width: "5rem",
                     height: "5rem",
                     borderRadius: "50%",
                     backgroundColor: "var(--bs-gray-300)",
                     fontSize: "1.75rem",
                     fontWeight: "bold",
+                    color: "black",
                   }}
                 >
                   3.2
@@ -1203,7 +1210,7 @@ const NetworkPage = (props) => {
               </ListGroup.Item>
             ))}
           </ListGroup>
-          {/* <pre>{JSON.stringify(followers?.data, null, 2)}</pre> */}
+          {CONST.DEBUG && <pre>{JSON.stringify(followers?.data, null, 2)}</pre>}
         </Tab>
         <Tab
           eventKey="following"
@@ -1217,7 +1224,7 @@ const NetworkPage = (props) => {
               </ListGroup.Item>
             ))}
           </ListGroup>
-          {/* <pre>{JSON.stringify(following?.data, null, 2)}</pre> */}
+          {CONST.DEBUG && <pre>{JSON.stringify(following?.data, null, 2)}</pre>}
         </Tab>
       </Tabs>
     </Page>
@@ -1342,7 +1349,7 @@ const CalendarPage = (props) => {
           </Row>
         );
       })}
-      <pre>{JSON.stringify(state?.data, null, 2)}</pre>
+      {CONST.DEBUG && <pre>{JSON.stringify(state?.data, null, 2)}</pre>}
     </Page>
   );
 };
@@ -1422,7 +1429,7 @@ const InboxPage = (props) => {
           />
         );
       })}
-      {/* <pre>{JSON.stringify(state?.data, null, 2)}</pre> */}
+      {CONST.DEBUG && <pre>{JSON.stringify(state?.data, null, 2)}</pre>}
     </Page>
   );
 };
@@ -1561,6 +1568,98 @@ const ChatPage = (props) => {
   );
 };
 
+const SharePage = (props) => {
+  const { auth } = useContext(AuthContext);
+  const [state, setState] = useState(requestProps);
+
+  React.useEffect(() => {
+    gofetch();
+  }, []);
+
+  const gofetch = () => {
+    fetch(`${CONST.API}/users/${auth.pk}`, {
+      method: "GET",
+      headers: {
+        Token: auth.token,
+      },
+    })
+      .then((response) => response.json())
+      .then((json) => {
+        setState(json);
+      })
+      .catch((error) => {
+        console.error(error);
+        toast("Failed to fetch share", { type: "error" });
+      });
+  };
+
+  const href = `https://whoseaway.com/qr/${auth.pk}`;
+
+  return (
+    <Page title="Share">
+      <Row className="pt-4">
+        <Col className="text-center">
+          <h2>@{state.data?.username}</h2>
+          <QRCode value={href} />
+          <div className="pt-4">Scan the code using your smartphone camera</div>
+        </Col>
+      </Row>
+      {CONST.DEBUG && <pre>{JSON.stringify(state?.data, null, 2)}</pre>}
+    </Page>
+  );
+};
+
+const SettingsPage = (props) => {
+  const { auth } = useContext(AuthContext);
+  const [state, setState] = useState(requestProps);
+
+  React.useEffect(() => {
+    gofetch();
+  }, []);
+
+  const gofetch = () => {
+    fetch(`${CONST.API}/users/${auth.pk}`, {
+      method: "GET",
+      headers: {
+        Token: auth.token,
+      },
+    })
+      .then((response) => response.json())
+      .then((json) => {
+        setState(json);
+      })
+      .catch((error) => {
+        console.error(error);
+        toast("Failed to fetch settings", { type: "error" });
+      });
+  };
+
+  // nested models
+  const { profile, image, location } = state?.data || {};
+  // identify
+  const { pk, username, created_at } = state?.data || {};
+
+  return (
+    <Page title="Settings">
+      <Tabs fill variant="tabs" defaultActiveKey="profile">
+        <Tab eventKey="profile" title={`Profile`} className="mt-4">
+          <pre>{JSON.stringify(profile, null, 2)}</pre>
+        </Tab>
+        <Tab eventKey="image" title={`Image`} className="mt-4">
+          <pre>{JSON.stringify(image, null, 2)}</pre>
+        </Tab>
+        <Tab eventKey="location" title={`Location`} className="mt-4">
+          <pre>{JSON.stringify(location, null, 2)}</pre>
+        </Tab>
+        <Tab eventKey="Account" title={`Account`} className="mt-4">
+          <pre>{JSON.stringify({ pk, username, created_at }, null, 2)}</pre>
+        </Tab>
+      </Tabs>
+      {CONST.DEBUG && <pre>{JSON.stringify(state?.data, null, 2)}</pre>}
+    </Page>
+  );
+};
+
 const ProtectedRoute = ({ redirectPath = "/", children }) => {
   const { isAuthed } = useContext(AuthContext);
 
@@ -1580,15 +1679,17 @@ const App = () => {
         <ToastContainer autoClose={1500} newestOnTop={true} />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<HomePage />} />
+            <Route path={`${ROUTES.HOME}`} element={<HomePage />} />
             <Route element={<ProtectedRoute auth={auth} />}>
-              <Route path="timeline" element={<TimelinePage />} />
-              <Route path="user/:pk" element={<UserPage />} />
-              <Route path="network" element={<NetworkPage />} />
-              <Route path="calendar" element={<CalendarPage />} />
-              <Route path="search" element={<SearchPage />} />
-              <Route path="inbox" element={<InboxPage />} />
-              <Route path="chat" element={<ChatPage />} />
+              <Route path={`${ROUTES.TIMELINE}`} element={<TimelinePage />} />
+              <Route path={`${ROUTES.USER}/:pk`} element={<UserPage />} />
+              <Route path={`${ROUTES.NETWORK}`} element={<NetworkPage />} />
+              <Route path={`${ROUTES.CALENDAR}`} element={<CalendarPage />} />
+              <Route path={`${ROUTES.SEARCH}`} element={<SearchPage />} />
+              <Route path={`${ROUTES.INBOX}`} element={<InboxPage />} />
+              <Route path={`${ROUTES.CHAT}`} element={<ChatPage />} />
+              <Route path={`${ROUTES.SETTINGS}`} element={<SettingsPage />} />
+              <Route path={`${ROUTES.SHARE}`} element={<SharePage />} />
             </Route>
             <Route path="*" element={<DefaultPage />} />
           </Routes>
