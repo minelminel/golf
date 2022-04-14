@@ -100,6 +100,16 @@ ul {
   background-color: inherit;
   color: var(--bs-light);
   border-bottom: 1px solid var(--bs-gray-700);
+  padding: 0.5rem;
+}
+
+/* Homepage Carousel */
+.tales {
+  width: 100%;
+}
+.carousel-inner {
+  width: 100%;
+  /* max-height: 300px !important; */
 }
 
 /* img {

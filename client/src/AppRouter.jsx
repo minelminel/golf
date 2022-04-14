@@ -43,10 +43,11 @@ import {
   Search,
   Share,
 } from "react-feather";
+import { AiFillCar } from "react-icons/ai";
+import { BiDrink, BiCopy } from "react-icons/bi";
 import { BsFillCalendarCheckFill } from "react-icons/bs";
 import { FaBeer, FaWalking, FaCoffee } from "react-icons/fa";
-import { BiDrink } from "react-icons/bi";
-import { AiFillCar } from "react-icons/ai";
+import { RiUserSharedFill } from "react-icons/ri";
 import {
   TiWeatherPartlySunny,
   TiWeatherSunny,
@@ -56,14 +57,6 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { ToastContainer, toast } from "react-toastify";
 import QRCode from "react-qr-code";
-
-import { formatTimeSince } from "./utils";
-
-import "react-toastify/dist/ReactToastify.css";
-import "bootstrap/dist/css/bootstrap.min.css";
-import "leaflet/dist/leaflet.css";
-import "./App.css";
-
 import {
   MapContainer,
   Marker,
@@ -72,6 +65,16 @@ import {
   Pane,
   Circle,
 } from "react-leaflet";
+import { useForm } from "react-hook-form";
+
+import { formatTimeSince } from "./utils";
+
+import "react-toastify/dist/ReactToastify.css";
+import "bootstrap/dist/css/bootstrap.min.css";
+import "leaflet/dist/leaflet.css";
+import "./App.css";
+
+import Logo from "./static/logo.png";
 
 const CONST = {
   API: `http://192.168.1.114:4000`,
@@ -353,7 +356,7 @@ const InboxItem = (props) => {
         {/* TODO: FIXME ellipsis */}
         <div>
           {ours ? `You: ` : ``}
-          {body.length > 30 ? body.slice(0, 30) + "..." : body}
+          {body.length > 24 ? body.slice(0, 24) + "..." : body}
         </div>
       </div>
       <div
@@ -497,7 +500,7 @@ const CalendarTray = (props) => {
         const date = loop.toLocaleDateString();
         const available = dates.has(date);
         loop.setDate(loop.getDate() + 1);
-        console.log(date, available);
+        // console.log(date, available);
         return (
           <Col key={uuidv4()}>
             <CalendarDay date={date} available={available} />
@@ -532,10 +535,8 @@ const PreferenceTray = (props) => {
 const UserItem = (props) => {
   // TODO: handle action as atom component
   const {
-    type, // followers,following
-    action = () => {
-      console.log(`default onClick`);
-    }, // right gutter button
+    type, // row,card
+    actionProps = {},
     onClick = () => {
       console.log(`default onClick`);
     },
@@ -548,6 +549,27 @@ const UserItem = (props) => {
     image = {},
     calendar = [],
   } = props;
+
+  const action = (
+    <div
+      className="float-right center"
+      style={{
+        fontSize: "small",
+        fontWeight: "bold",
+        marginTop: "auto",
+        marginBottom: "auto",
+      }}
+    >
+      <Badge
+        bg={actionProps.variant}
+        text={actionProps.variant === "light" ? "dark" : "light"}
+        style={{ cursor: "pointer" }}
+        onClick={actionProps.onClick}
+      >
+        {actionProps.text}
+      </Badge>
+    </div>
+  );
 
   return (
     <ListGroup.Item
@@ -587,32 +609,22 @@ const UserItem = (props) => {
                 <span className="fw-bold">{profile.alias}&nbsp;</span>@
                 {username}
               </span>
+              {/* <span className="pull-right">👟 🍻 🌥</span> */}
             </Row>
             <Row>
               <small className="px-0 text-muted">{location.label}</small>
             </Row>
             <Row>{profile.bio}</Row>
           </Col>
-          <Col className="col-2">
-            <div
-              className="float-right center"
-              style={{
-                fontSize: "small",
-                fontWeight: "bold",
-                marginTop: "auto",
-                marginBottom: "auto",
-              }}
-            >
-              <Badge
-                variant={action.variant}
-                style={{ cursor: "pointer" }}
-                onClick={action}
-              >
-                {type === "followers" ? "Follow" : "Unfollow"}
-              </Badge>
-            </div>
-          </Col>
+          <Col className="col-2">{action}</Col>
         </Row>
+        {type === "card" && (
+          <Row>
+            <Col className="px-0 mt-1">
+              <CalendarTray />
+            </Col>
+          </Row>
+        )}
       </Container>
     </ListGroup.Item>
   );
@@ -648,6 +660,37 @@ const MapPanel = (props) => {
 const AuthContext = createContext();
 //
 
+const useRequest = (auth) => {
+  const { token } = auth;
+
+  async function doRequest(url, { method = "GET", json, params }) {
+    const headers = {
+      ...(token ? { Token: token } : {}),
+      ...(json ? { "Content-Type": "application/json" } : {}),
+    };
+
+    const kwargs = {
+      method,
+      headers,
+      mode: "cors",
+      cache: "no-cache",
+      credentials: "same-origin",
+      ...(json ? { body: JSON.stringify(json) } : {}),
+    };
+
+    console.log(url, kwargs, headers);
+
+    const response = await fetch(
+      params ? `${url}?${URLSearchParams(params).toString()}` : url,
+      kwargs
+    );
+
+    return response;
+  }
+
+  return doRequest;
+};
+
 const useAuth = () => {
   const getAuth = () => {
     const session = JSON.parse(sessionStorage.getItem("auth"));
@@ -679,6 +722,8 @@ const Navigation = (props) => {
   const [notifications, setNotifications] = useState();
   const navigate = useNavigate();
   const { brand } = props;
+
+  const iconSize = 28;
 
   React.useEffect(() => {
     isAuthed() && gofetch();
@@ -714,7 +759,7 @@ const Navigation = (props) => {
           {/* LEFT */}
 
           {isAuthed() ? (
-            <NavDropdown title={<Layers />}>
+            <NavDropdown title={<Layers size={iconSize} />}>
               <NavDropdown.Item onClick={() => navigate(ROUTES.HOME)}>
                 Home
               </NavDropdown.Item>
@@ -739,6 +784,10 @@ const Navigation = (props) => {
                 Inbox
               </NavDropdown.Item>
               <NavDropdown.Divider />
+              <NavDropdown.Item onClick={() => navigate(ROUTES.SHARE)}>
+                Share&nbsp;
+                <Share size={18} />
+              </NavDropdown.Item>
               <NavDropdown.Item onClick={() => navigate(ROUTES.SETTINGS)}>
                 Settings
               </NavDropdown.Item>
@@ -757,7 +806,7 @@ const Navigation = (props) => {
           {isAuthed() ? (
             <Nav.Link>
               <Link to={ROUTES.INBOX}>
-                <Box />
+                <Box size={iconSize} />
                 {notifications?.data > 0 && (
                   <Badge
                     pill
@@ -1014,7 +1063,7 @@ const UserPage = (props) => {
 
   React.useEffect(() => {
     gofetch();
-  }, []);
+  }, [pk]);
 
   const gofetch = () => {
     fetch(`${CONST.API}/users/${pk}`, {
@@ -1206,7 +1255,15 @@ const NetworkPage = (props) => {
           <ListGroup className="mt-3" variant="flush">
             {followers.data?.content.map((element) => (
               <ListGroup.Item key={uuidv4()}>
-                <UserItem type="followers" {...element.src} />
+                <UserItem
+                  type="row"
+                  {...element.src}
+                  actionProps={{
+                    text: "Follow",
+                    variant: "primary",
+                    onClick: () => {},
+                  }}
+                />
               </ListGroup.Item>
             ))}
           </ListGroup>
@@ -1220,7 +1277,15 @@ const NetworkPage = (props) => {
           <ListGroup className="mt-3" variant="flush">
             {following.data?.content.map((element) => (
               <ListGroup.Item key={uuidv4()}>
-                <UserItem type="following" {...element.dst} />
+                <UserItem
+                  type="row"
+                  {...element.dst}
+                  actionProps={{
+                    text: "Unfollow",
+                    variant: "primary",
+                    onClick: () => {},
+                  }}
+                />
               </ListGroup.Item>
             ))}
           </ListGroup>
@@ -1356,32 +1421,122 @@ const CalendarPage = (props) => {
 
 const SearchPage = (props) => {
   const { auth } = useContext(AuthContext);
-  const [state, setState] = useState(null);
+  const [state, setState] = useState(requestProps);
+
+  const navigate = useNavigate();
+  const request = useRequest(auth);
+
+  const {
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors },
+  } = useForm();
 
   React.useEffect(() => {
-    gofetch();
+    handleQuery();
   }, []);
 
-  const gofetch = () => {
-    fetch(`${CONST.API}/search`, {
-      method: "GET",
-      headers: {
-        Token: auth.token,
-      },
-    })
+  const handleQuery = (params) => {
+    request(`${CONST.API}/search/query`, { method: "POST" })
       .then((response) => response.json())
       .then((json) => {
+        console.log(json);
         setState(json);
       })
       .catch((error) => {
         console.error(error);
+        setState({ error });
         toast("Failed to fetch search", { type: "error" });
       });
   };
 
   return (
     <Page title="Search">
-      <pre>{JSON.stringify(state?.data, null, 2)}</pre>
+      {/* <pre>🟦⬜️🟦 🟦🟦⬜️ ⬜️⬜️⬜️</pre> */}
+      <Row>
+        <Col>
+          <form onSubmit={handleSubmit(handleQuery)}>
+            {/* register your input into the hook by invoking the "register" function */}
+            <fieldset>
+              <legend>Location</legend>
+              <label>Distance</label>
+              <input
+                type="range"
+                min={10}
+                max={100000}
+                step={10}
+                defaultValue={100000}
+                {...register("distance")}
+              />
+            </fieldset>
+
+            <fieldset>
+              <legend>Profile</legend>
+              <label>foo</label>
+              <input />
+            </fieldset>
+
+            <fieldset>
+              <legend>Calendar</legend>
+              <label>bar</label>
+              <input />
+            </fieldset>
+
+            <fieldset>
+              <legend>Network</legend>
+              <label>zed</label>
+              <input />
+            </fieldset>
+
+            {/* include validation with required or other standard HTML validation rules */}
+            {/* <label>criteria</label> */}
+            {/* <input {...register("criteria", { required: true })} /> */}
+            {/* errors will return when field validation fails  */}
+            {/* {errors.criteria && <span>This field is required</span>} */}
+            <fieldset>
+              <legend></legend>
+              <Button type="submit">Search</Button>
+            </fieldset>
+          </form>
+          <hr />
+        </Col>
+      </Row>
+      <Row>
+        <Col>
+          {state.data?.metadata?.total && (
+            <small className="text-muted">{`${state.data.metadata.total} results`}</small>
+          )}
+          {/* Pagination-first component */}
+          <ListGroup className="mt-3" variant="flush">
+            {state.data?.content.map((element) => (
+              <ListGroup.Item key={uuidv4()}>
+                <UserItem
+                  type="card"
+                  {...element}
+                  actionProps={{
+                    text: <RiUserSharedFill size={24} />,
+                    variant: "light",
+                    onClick: () => {
+                      navigate(`${ROUTES.USER}/${element.pk}`);
+                    },
+                  }}
+                />
+              </ListGroup.Item>
+            ))}
+            {/* PAGINATION LINKS */}
+            {state?.data?.metadata?.links?.next && (
+              <ListGroup.Item key={uuidv4()}>
+                <div className="my-3 text-center">
+                  <a href="">Next Page</a>
+                </div>
+              </ListGroup.Item>
+            )}
+          </ListGroup>
+        </Col>
+      </Row>
+
+      {CONST.DEBUG && <pre>{JSON.stringify(state?.data, null, 2)}</pre>}
     </Page>
   );
 };
@@ -1599,9 +1754,34 @@ const SharePage = (props) => {
     <Page title="Share">
       <Row className="pt-4">
         <Col className="text-center">
-          <h2>@{state.data?.username}</h2>
+          <h2 className="pb-2">@{state.data?.username}</h2>
           <QRCode value={href} />
           <div className="pt-4">Scan the code using your smartphone camera</div>
+        </Col>
+      </Row>
+      <hr />
+      <Row className="pt-4">
+        <Col className="text-center d-grid">
+          <div className="pb-4">Or click below to copy the link</div>
+          <Button
+            onClick={() => {
+              console.log("copy to clipboard");
+              navigator.clipboard
+                .writeText(href)
+                .then(() => {
+                  console.log(`Copied to clipboard`);
+                  toast(`Copied to clipboard`, { type: "success" });
+                })
+                .catch((error) => {
+                  console.error(`Failed to copy to clipboard`);
+                });
+            }}
+          >
+            <BiCopy size={24} />
+          </Button>
+          <h4 className="py-4">
+            <a href={href}>{href}</a>
+          </h4>
         </Col>
       </Row>
       {CONST.DEBUG && <pre>{JSON.stringify(state?.data, null, 2)}</pre>}
@@ -1710,7 +1890,8 @@ Page.defaultProps = {
 
 Navigation.defaultProps = {
   brand: {
-    text: "Whose ⛳️ Away",
+    // text: "Whose ⛳️ Away",
+    text: <img src={Logo} height={48} />,
     type: "title",
   },
 };

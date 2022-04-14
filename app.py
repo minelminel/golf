@@ -1207,6 +1207,44 @@ class NetworkManager(BaseManager):
         return False
 
 
+class QueryManager(BaseManager):
+    def query(self, size, page, **kwargs):
+        # submodule queries should register parsers here and be able to
+        # play nicely with unknown values. subqueries all run and we rank results
+        user_query_params = dict()
+        profile_query_params = dict()
+        location_query_params = dict(distance=10000)
+        calendar_query_params = dict()
+        network_query_params = dict()
+
+        # user_content = user_manager.query_users(**user_query_params)
+        user_content = UserSchema(many=True).dump(db.session.query(UserModel).all())
+        # profile_content = profile_manager.query_profiles()
+        # location_content = location_manager.query_locations()
+        # calendar_content = calendar_manager.query_calendar()
+        # network_content = network_manager.query_network()
+
+        concat = [*user_content]
+        # concat = [*user_content, *profile_content, *location_content, *calendar_content, *network_content]
+        # TODO: rank
+        total = len(concat)
+        pages = total // size
+        content = concat[page * size : (page * size) + size]
+
+        pags = {
+            "content": content,
+            "metadata": {
+                "page": page,
+                "pages": pages,
+                "size": size,
+                "total": total,
+                "checksum": checksum(content),
+                "links": {},
+            },
+        }
+        return pags
+
+
 # ----------------------------------- #
 @app.errorhandler(Exception)
 def error(e):
@@ -1479,6 +1517,14 @@ def set_availability():
 
 
 # ----------------------------------- #
+@app.route("/search/query", methods=["POST"])
+def search_query():
+    pags = pagination_parser.parse_args()
+    # TODO: put back request.get_json()
+    return Reply.success(data=query_manager.query(**pags))
+
+
+# ----------------------------------- #
 @app.route("/network", methods=["POST"])
 def create_network():
     # TODO: fail if exists
@@ -1558,9 +1604,10 @@ if __name__ == "__main__":
     image_manager = ImageManager()
     calendar_manager = CalendarManager()
     network_manager = NetworkManager()
+    query_manager = QueryManager()
 
     RESET = True
-    N = 5
+    N = 10
 
     with app.app_context() as ctx:
         if RESET:
@@ -1568,6 +1615,7 @@ if __name__ == "__main__":
             db.create_all()
 
             if N > 0:
+                tic = datetime.datetime.now()
                 # USERS
                 with open("./data/users.json", "r") as file:
                     users = json.load(file)
@@ -1726,6 +1774,9 @@ if __name__ == "__main__":
         print("Networks:", db.session.query(NetworkModel).count())
         # pprint(NetworkSchema(many=True).dump(db.session.query(NetworkModel).all()))
         print("Calendars:", db.session.query(CalendarModel).count())
+
+        toc = datetime.datetime.now()
+        print(f"Startup Time: {toc - tic}")
 
     log.info("Done initializing data, starting server")
     # interactive mode
