@@ -49,6 +49,10 @@ a.dropdown-toggle.nav-link::after {
     0 16px 16px rgba(0, 0, 0, 0.12);
 } */
 
+.fixed-bottom {
+  width: inherit;
+}
+
 .dropdown-item {
   line-height: 2rem;
 }

@@ -699,7 +699,6 @@ class ProfileManager(BaseManager):
 
     def create_profile(self, data):
         profile = ProfileSchema().load(data)
-        set_trace()
         db.session.add(profile)
         db.session.commit()
         return ProfileSchema().dump(profile)

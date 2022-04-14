@@ -422,44 +422,53 @@ const ChatInput = (props) => {
   };
 
   return (
-    <Row
-      className="fixed-bottom"
-      style={{
-        margin: "0 auto",
-        backgroundColor: "var(--bs-dark)",
-        height: "6rem",
-        width: "inherit",
-      }}
-    >
-      <Col>
-        <input
-          onChange={type}
-          value={input}
-          as="textarea"
-          rows={2}
-          placeholder="Start typing..."
+    <Container className="">
+      <Row
+        className="fixed-bottom text-center"
+        style={{
+          margin: "0 auto",
+          backgroundColor: "var(--bs-dark)",
+          height: "6rem",
+          width: "90%",
+        }}
+      >
+        <Col
+          xs
+          sm={11}
+          md={8}
+          lg={7}
+          xl={5}
           style={{
-            padding: "5px",
-            borderRadius: "8px",
-            border: "1px solid gray",
-            width: "100%",
-            marginTop: "0.5rem",
-          }}
-        />
-      </Col>
-      <Col xs={2} sm={2} md={2} lg={2} className="text-end">
-        <Button
-          disabled={input.length < 1}
-          onClick={send}
-          style={{
-            borderRadius: "8px",
-            marginTop: "0.5rem",
+            margin: "0 auto",
           }}
         >
-          <Send size={20} />
-        </Button>
-      </Col>
-    </Row>
+          <input
+            onChange={type}
+            value={input}
+            as="textarea"
+            rows={2}
+            placeholder="Start typing..."
+            style={{
+              padding: "5px",
+              borderRadius: "8px",
+              border: "1px solid gray",
+              width: "75%",
+              marginTop: "0.5rem",
+            }}
+          />
+          <Button
+            disabled={input.length < 1}
+            onClick={send}
+            style={{
+              borderRadius: "8px",
+              marginLeft: "1rem",
+            }}
+          >
+            <Send size={20} />
+          </Button>
+        </Col>
+      </Row>
+    </Container>
   );
 };
 
@@ -631,9 +640,10 @@ const UserItem = (props) => {
 };
 
 const MapPanel = (props) => {
-  const { distance, geometry = {} } = props;
+  const { distance, label, geometry = {} } = props;
   const { coordinates = [] } = geometry;
   const position = coordinates.slice().reverse();
+  // TODO: consider distance & label
 
   return (
     position.length && (
@@ -759,9 +769,6 @@ const Navigation = (props) => {
 
           {isAuthed() ? (
             <NavDropdown title={<Layers size={iconSize} />}>
-              {/* <NavDropdown.Item onClick={() => navigate(ROUTES.HOME)}>
-                Home
-              </NavDropdown.Item> */}
               <NavDropdown.Item onClick={() => navigate(ROUTES.TIMELINE)}>
                 Timeline
               </NavDropdown.Item>
@@ -1862,6 +1869,14 @@ const SettingsPage = (props) => {
             <Form.Label>Default text input example</Form.Label>
             <Form.Control type="text" placeholder="geometry" />
           </Form.Group>
+          <div
+            style={{
+              marginTop: "3rem",
+              height: "10rem",
+            }}
+          >
+            <MapPanel {...location} />
+          </div>
           {CONST.DEBUG && <pre>{JSON.stringify(location, null, 2)}</pre>}
         </Tab>
         {/* ACCOUNT */}
