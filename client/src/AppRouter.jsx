@@ -631,10 +631,9 @@ const UserItem = (props) => {
 };
 
 const MapPanel = (props) => {
-  const { distance, location = {} } = props;
-  const { coordinates = [] } = location;
+  const { distance, geometry = {} } = props;
+  const { coordinates = [] } = geometry;
   const position = coordinates.slice().reverse();
-  console.log(position);
 
   return (
     position.length && (
@@ -678,7 +677,7 @@ const useRequest = (auth) => {
       ...(json ? { body: JSON.stringify(json) } : {}),
     };
 
-    console.log(url, kwargs, headers);
+    console.debug(`useRequest:`, url, kwargs, headers);
 
     const response = await fetch(
       params ? `${url}?${URLSearchParams(params).toString()}` : url,
@@ -760,9 +759,9 @@ const Navigation = (props) => {
 
           {isAuthed() ? (
             <NavDropdown title={<Layers size={iconSize} />}>
-              <NavDropdown.Item onClick={() => navigate(ROUTES.HOME)}>
+              {/* <NavDropdown.Item onClick={() => navigate(ROUTES.HOME)}>
                 Home
-              </NavDropdown.Item>
+              </NavDropdown.Item> */}
               <NavDropdown.Item onClick={() => navigate(ROUTES.TIMELINE)}>
                 Timeline
               </NavDropdown.Item>
@@ -798,7 +797,9 @@ const Navigation = (props) => {
           )}
           {/* CENTER */}
           {brand.type === "title" ? (
-            <Navbar.Brand className="mx-0">{brand.text}</Navbar.Brand>
+            <Navbar.Brand className="mx-0" href="/">
+              {brand.text}
+            </Navbar.Brand>
           ) : (
             <Navbar.Text className="text-muted small">{brand.text}</Navbar.Text>
           )}
@@ -1459,6 +1460,12 @@ const SearchPage = (props) => {
           <form onSubmit={handleSubmit(handleQuery)}>
             {/* register your input into the hook by invoking the "register" function */}
             <fieldset>
+              <legend>Username</legend>
+              <label>@</label>
+              <input />
+            </fieldset>
+
+            <fieldset>
               <legend>Location</legend>
               <label>Distance</label>
               <input
@@ -1748,7 +1755,7 @@ const SharePage = (props) => {
       });
   };
 
-  const href = `https://whoseaway.com/qr/${auth.pk}`;
+  const href = `https://whoseaway.com/ref/${auth.pk}`;
 
   return (
     <Page title="Share">
@@ -1793,19 +1800,19 @@ const SettingsPage = (props) => {
   const { auth } = useContext(AuthContext);
   const [state, setState] = useState(requestProps);
 
+  const request = useRequest(auth);
+
   React.useEffect(() => {
     gofetch();
   }, []);
 
   const gofetch = () => {
-    fetch(`${CONST.API}/users/${auth.pk}`, {
+    request(`${CONST.API}/users/${auth.pk}`, {
       method: "GET",
-      headers: {
-        Token: auth.token,
-      },
     })
       .then((response) => response.json())
       .then((json) => {
+        console.log(json);
         setState(json);
       })
       .catch((error) => {
@@ -1822,17 +1829,62 @@ const SettingsPage = (props) => {
   return (
     <Page title="Settings">
       <Tabs fill variant="tabs" defaultActiveKey="profile">
+        {/* PROFILE */}
         <Tab eventKey="profile" title={`Profile`} className="mt-4">
-          <pre>{JSON.stringify(profile, null, 2)}</pre>
+          {["alias", "bio", "handicap", "mobility", "drinking", "weather"].map(
+            (field) => {
+              const value = profile ? profile[field] : null;
+              return (
+                <Form.Group key={uuidv4()}>
+                  <Form.Label>{field}</Form.Label>
+                  <Form.Control type="text" placeholder={value} />
+                </Form.Group>
+              );
+            }
+          )}
+          {CONST.DEBUG && <pre>{JSON.stringify(profile, null, 2)}</pre>}
         </Tab>
+        {/* IMAGE */}
         <Tab eventKey="image" title={`Image`} className="mt-4">
-          <pre>{JSON.stringify(image, null, 2)}</pre>
+          <Form.Group controlId="formFile" className="mb-3">
+            <Form.Label>Default file input example</Form.Label>
+            <Form.Control type="file" />
+          </Form.Group>
+          {CONST.DEBUG && <pre>{JSON.stringify(image, null, 2)}</pre>}
         </Tab>
+        {/* LOCATION */}
         <Tab eventKey="location" title={`Location`} className="mt-4">
-          <pre>{JSON.stringify(location, null, 2)}</pre>
+          <Form.Group controlId="location.label" className="mb-3">
+            <Form.Label>Default text input example</Form.Label>
+            <Form.Control type="text" placeholder="label" />
+          </Form.Group>
+          <Form.Group controlId="location.geometry" className="mb-3">
+            <Form.Label>Default text input example</Form.Label>
+            <Form.Control type="text" placeholder="geometry" />
+          </Form.Group>
+          {CONST.DEBUG && <pre>{JSON.stringify(location, null, 2)}</pre>}
         </Tab>
+        {/* ACCOUNT */}
         <Tab eventKey="Account" title={`Account`} className="mt-4">
-          <pre>{JSON.stringify({ pk, username, created_at }, null, 2)}</pre>
+          <Form.Group controlId="user.email" className="mb-3">
+            <Form.Label>Default text input example</Form.Label>
+            <Form.Control type="text" placeholder="email" />
+          </Form.Group>
+          <Form.Group controlId="user.pk" className="mb-3">
+            <Form.Label>Default text input example</Form.Label>
+            <Form.Control type="text" placeholder="pk" />
+          </Form.Group>
+          <Form.Group controlId="user.username" className="mb-3">
+            <Form.Label>Default text input example</Form.Label>
+            <Form.Control type="text" placeholder="username" />
+          </Form.Group>
+          <Form.Group controlId="user.created_at" className="mb-3">
+            <Form.Label>Default text input example</Form.Label>
+            <Form.Control type="text" placeholder="created_at" />
+          </Form.Group>
+          {CONST.DEBUG && (
+            <pre>{JSON.stringify({ pk, username, created_at }, null, 2)}</pre>
+          )}
         </Tab>
       </Tabs>
       {CONST.DEBUG && <pre>{JSON.stringify(state?.data, null, 2)}</pre>}
@@ -1890,7 +1942,6 @@ Page.defaultProps = {
 
 Navigation.defaultProps = {
   brand: {
-    // text: "Whose ⛳️ Away",
     text: <img src={Logo} height={48} />,
     type: "title",
   },

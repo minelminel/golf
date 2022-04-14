@@ -320,7 +320,7 @@ class ProfileModel(BaseModel):
 
 class LocationModel(BaseModel):
     __tablename__ = "locations"
-    location = db.Column(
+    geometry = db.Column(
         Geography(geometry_type="POINT", srid=SRID), nullable=False, unique=False
     )
     label = db.Column(db.String(), nullable=True, unique=False)
@@ -490,11 +490,11 @@ class LocationSchema(BaseSchema):
         model = LocationModel
         model_coverter = GeoConverter
         editable = (
-            "location",
+            "geometry",
             "label",
         )
 
-    location = GeoField(required=True, allow_none=False)
+    geometry = GeoField(required=True, allow_none=False)
     lable = fields.Str(required=False, allow_none=True)
     distance = fields.Decimal(required=False, default=None)
 
@@ -758,7 +758,7 @@ class LocationManager(BaseManager):
         p = WKTElement("POINT({0} {1})".format(latitude, longitude), srid=SRID)
         # TODO: order by distance, closest first
         q = db.session.query(LocationModel).filter(
-            ST_DWithin(LocationModel.location, p, meters)
+            ST_DWithin(LocationModel.geometry, p, meters)
         )
         total = q.count()
         pages = total // size
@@ -1678,7 +1678,7 @@ if __name__ == "__main__":
                 for i, location in tqdm(
                     enumerate(locations), total=len(locations), desc="Loading locations"
                 ):
-                    lon, lat = location["location"]["coordinates"]
+                    lon, lat = location["geometry"]["coordinates"]
                     point = f"POINT({lon} {lat})"
                     label = random.choice(
                         [
@@ -1689,7 +1689,7 @@ if __name__ == "__main__":
                             "Coastline",
                         ]
                     )
-                    location.update(location=point, label=label)
+                    location.update(geometry=point, label=label)
                     trans = LocationModel(**location)
                     db.session.add(trans)
                     db.session.commit()
