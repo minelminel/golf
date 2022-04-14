@@ -61,6 +61,7 @@ from marshmallow import (
     post_dump,
     pre_load,
 )
+from hashids import Hashids as _Hashids
 import geojson
 from passlib.apps import custom_app_context as password_context
 from marshmallow_sqlalchemy import ModelConverter
@@ -135,39 +136,43 @@ calendar_parser.add_argument("fk", location="args", type=int, required=True)
 # fmt: on
 
 
-# class Hashids:
-#     def __init__(self, app=None, *args, **kwargs):
-#         if app:
-#             self.init_app(app)
-#         self._hashids = None
+class Hashids:
+    def __init__(self, app=None, *args, **kwargs):
+        if app:
+            self.init_app(app)
+        self._hashids = None
 
-#     def init_app(self, app):
-#         self.app = app
-#         self.app.extensions["hashids"] = self
-#         self.salt = app.config["SECRET_KEY"]
-#         self.min_length = app.config["TOKEN_MIN_LENGTH"]
-#         self.alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
-#         self._hashids = _Hashids(salt=self.salt, min_length=self.min_length, alphabet=self.alphabet)
+    def init_app(self, app):
+        self.app = app
+        self.app.extensions["hashids"] = self
+        self.salt = app.config["SECRET_KEY"]
+        self.min_length = app.config["TOKEN_MIN_LENGTH"]
+        self.alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+        self._hashids = _Hashids(
+            salt=self.salt, min_length=self.min_length, alphabet=self.alphabet
+        )
 
-#     def encode(self, *args, **kwargs):
-#         return self._hashids.encode(*args, **kwargs)
+    def encode(self, key):
+        return self._hashids.encode(key)
 
-#     def decode(self, *args, **kwargs):
-#         hid, *_ = self._hashids.decode(*args, **kwargs) or (None, None)
-#         return hid
+    def decode(self, value):
+        hid, *_ = self._hashids.decode(value) or (None, None)
+        return hid
 
-# class HashidField(fields.Field):
-#     def _deserialize(self, value, attr, data, **kwargs):
-#         if value is None:
-#             return None
-#         return hashids.decode(value)
 
-#     def _serialize(self, value, attr, obj, **kwargs):
-#         if value is None:
-#             return None
-#         return hashids.encode(value)
+hashids = Hashids()
 
-# hashids = Hashids()
+
+class HashidField(fields.Field):
+    def _deserialize(self, value, attr, data, **kwargs):
+        if value is None:
+            return None
+        return hashids.decode(value)
+
+    def _serialize(self, value, attr, obj, **kwargs):
+        if value is None:
+            return None
+        return hashids.encode(value)
 
 
 def auth(*args, **kwargs):
@@ -318,6 +323,7 @@ class LocationModel(BaseModel):
     location = db.Column(
         Geography(geometry_type="POINT", srid=SRID), nullable=False, unique=False
     )
+    label = db.Column(db.String(), nullable=True, unique=False)
     fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
     user = relationship("UserModel", back_populates="location")
 
@@ -396,7 +402,7 @@ class BaseSchema(ma.SQLAlchemyAutoSchema):
     https://github.com/marshmallow-code/marshmallow/issues/588#issuecomment-283544372
     """
 
-    # pk = HashidField(dump_only=True)
+    # pk = HashidField(dump_only=True) # this does work
     pk = fields.Int(dump_only=True)
     created_at = fields.Int(dump_only=True)
     updated_at = fields.Int(dump_only=True)
@@ -483,9 +489,13 @@ class LocationSchema(BaseSchema):
     class Meta(BaseSchema.Meta):
         model = LocationModel
         model_coverter = GeoConverter
-        editable = ("point",)
+        editable = (
+            "location",
+            "label",
+        )
 
     location = GeoField(required=True, allow_none=False)
+    lable = fields.Str(required=False, allow_none=True)
     distance = fields.Decimal(required=False, default=None)
 
 
@@ -861,6 +871,7 @@ class MessageManager(BaseManager):
         return True
 
     def get_conversations(self, fk, page=0, size=10):
+        log.info(f"Getting conversations: fk={fk} page={page} size={size}")
         # return the most recent message from each conversation
         messages = list()
         for (a, b) in self.get_conversation_pairs(fk=fk):
@@ -896,6 +907,9 @@ class MessageManager(BaseManager):
         return pags
 
     def get_conversation(self, src_fk, dst_fk, page=0, size=10):
+        log.info(
+            f"Getting conversation: src_fk={src_fk} dst_fk={dst_fk} page={page} size={size}"
+        )
         # return an ordered message history of one conversation
         q = (
             db.session.query(MessageModel)
@@ -934,6 +948,7 @@ class MessageManager(BaseManager):
         return pags
 
     def get_notifications(self, pk) -> int:
+        log.info(f"Getting notifications: pk={pk}")
         notifications = 0
         for (a, b) in self.get_conversation_pairs(fk=pk):
             src_fk = [a, b][a == pk]
@@ -948,6 +963,18 @@ class MessageManager(BaseManager):
             )
             notifications += 1 if notifs else 0
         return notifications
+
+    def mark_read(self, src_fk, dst_fk):
+        log.info(f"Updating chat notifications: src_fk={src_fk} dst_fk={dst_fk}")
+        q = (
+            db.session.query(MessageModel)
+            .filter(((MessageModel.src_fk == dst_fk) & (MessageModel.dst_fk == src_fk)))
+            .filter_by(read=False)
+        )
+        messages = q.all()
+        for message in messages:
+            self.update_message(pk=message.pk, patches=dict(read=True))
+        return len(messages)
 
 
 class CalendarManager(BaseManager):
@@ -1380,6 +1407,11 @@ def get_conversation(src_fk, dst_fk):
     return Reply.success(data=message_manager.get_conversation(src_fk, dst_fk, **pags))
 
 
+@app.route("/chat/read/<int:src_fk>/<int:dst_fk>", methods=["POST"])
+def mark_read(src_fk, dst_fk):
+    return Reply.success(data=message_manager.mark_read(src_fk, dst_fk))
+
+
 # ----------------------------------- #
 @app.route("/notifications/<int:pk>", methods=["POST"])
 def get_notifications(pk):
@@ -1515,7 +1547,7 @@ if __name__ == "__main__":
     db.init_app(app)
     ma.init_app(app)
 
-    # hashids.init_app(app)
+    hashids.init_app(app)
     auth_manager = AuthManager()
     user_manager = UserManager()
     profile_manager = ProfileManager()
@@ -1527,7 +1559,7 @@ if __name__ == "__main__":
     network_manager = NetworkManager()
 
     RESET = True
-    N = 20
+    N = 5
 
     with app.app_context() as ctx:
         if RESET:
@@ -1545,7 +1577,7 @@ if __name__ == "__main__":
                     trans = UserModel(**user)
                     db.session.add(trans)
                     db.session.commit()
-                # pprint(user_manager.read_user(pk=1))
+                pprint(user_manager.read_user(pk=1))
 
                 # PROFILES
                 with open("./data/profiles.json", "r") as file:
@@ -1599,7 +1631,16 @@ if __name__ == "__main__":
                 ):
                     lon, lat = location["location"]["coordinates"]
                     point = f"POINT({lon} {lat})"
-                    location.update(location=point)
+                    label = random.choice(
+                        [
+                            "Small town",
+                            "Big city",
+                            "Metro region",
+                            "Back country",
+                            "Coastline",
+                        ]
+                    )
+                    location.update(location=point, label=label)
                     trans = LocationModel(**location)
                     db.session.add(trans)
                     db.session.commit()

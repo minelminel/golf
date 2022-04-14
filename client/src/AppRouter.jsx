@@ -85,6 +85,7 @@ const ROUTES = {
   SEARCH: "/search",
   INBOX: "/inbox",
   CHAT: "/chat",
+  SHARE: "/share",
 };
 
 const ENUMS = {
@@ -340,7 +341,7 @@ const InboxItem = (props) => {
       </div>
       <div className="ms-3 me-auto">
         <div className="align-middle">
-          <span>@{ours ? dst?.username : src?.username}</span>
+          <strong>@{ours ? dst?.username : src?.username}</strong>
           &nbsp;
           {ours && !read ? "🔵" : null}
         </div>
@@ -414,9 +415,13 @@ const ChatInput = (props) => {
 
   return (
     <Row
-      className="align-items-end mb-3 fixed-bottom"
+      className="fixed-bottom"
       style={{
         margin: "0 auto",
+        // border: "2px solid purple",
+        // backgroundColor: "white",
+        backdropFilter: "blur(8px)",
+        height: "6rem",
       }}
     >
       <Col>
@@ -430,8 +435,8 @@ const ChatInput = (props) => {
             padding: "5px",
             borderRadius: "8px",
             border: "1px solid gray",
-            marginTop: "10px",
             width: "100%",
+            marginTop: "0.5rem",
           }}
         />
       </Col>
@@ -441,6 +446,7 @@ const ChatInput = (props) => {
           onClick={send}
           style={{
             borderRadius: "8px",
+            marginTop: "0.5rem",
           }}
         >
           <Send size={20} />
@@ -519,74 +525,93 @@ const PreferenceTray = (props) => {
 };
 
 const UserItem = (props) => {
+  // TODO: handle action as atom component
   const {
     type, // followers,following
+    action = () => {
+      console.log(`default onClick`);
+    }, // right gutter button
+    onClick = () => {
+      console.log(`default onClick`);
+    },
+    style = {},
+    // user props
     pk,
     username,
     profile = {},
     location = {},
     image = {},
     calendar = [],
-    onClick = () => {},
   } = props;
 
   return (
     <ListGroup.Item
       as="li"
-      className="d-flex mt-3"
-      // style={{
-      //   borderRadius: "15px",
-      //   paddingTop: "15px",
-      //   paddingBottom: "15px",
-      // }}
-      onClick={onClick}
+      className="d-flex"
+      style={{
+        border: "none",
+        ...style,
+      }}
     >
-      <div className="frame ms-2">
-        <img
-          // alt={`${ours ? dst?.username : src?.username}`}
-          // title={`/images/${ours ? dst?.username : src?.username}`}
-          src={`https://cdn.theatlantic.com/media/mt/science/cat_caviar.jpg`}
-          className="cropped"
-          style={{
-            width: "36px",
-            height: "36px",
-          }}
-        />
-      </div>
-      <div className="ms-3 me-auto">
-        <div className="align-middle">
-          <span>@username</span>
-        </div>
-        <div>hello world this is a bio</div>
-      </div>
-      <div
-        className="text-muted float-right"
-        style={{
-          fontSize: "small",
-          fontWeight: "bold",
-          marginTop: "auto",
-          marginBottom: "auto",
-        }}
-      >
-        {/* {formatTimeSince(created_at)} */}
-        remove
-      </div>
+      <Container className="p-0">
+        <Row>
+          <Col className="col-2">
+            <div className="center">
+              <img
+                // alt={`${ours ? dst?.username : src?.username}`}
+                // title={`/images/${ours ? dst?.username : src?.username}`}
+                onClick={onClick}
+                alt={`${username}`}
+                title={`${username}`}
+                src={
+                  image?.href ||
+                  `https://cdn.theatlantic.com/media/mt/science/cat_caviar.jpg`
+                }
+                className="cropped"
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  cursor: "pointer",
+                }}
+              />
+            </div>
+          </Col>
+          <Col>
+            <Row>
+              <span className="px-0">
+                <span className="fw-bold">{profile.alias}&nbsp;</span>@
+                {username}
+              </span>
+            </Row>
+            <Row>
+              <small className="px-0 text-muted">{location.label}</small>
+            </Row>
+            <Row>{profile.bio}</Row>
+          </Col>
+          <Col className="col-2">
+            <div
+              className="float-right center"
+              style={{
+                fontSize: "small",
+                fontWeight: "bold",
+                marginTop: "auto",
+                marginBottom: "auto",
+              }}
+            >
+              <Badge
+                variant={action.variant}
+                style={{ cursor: "pointer" }}
+                onClick={action}
+              >
+                {type === "followers" ? "Follow" : "Unfollow"}
+              </Badge>
+            </div>
+          </Col>
+        </Row>
+      </Container>
     </ListGroup.Item>
   );
 };
-// return (
-// <div>
-//   <ul>
-//     <li>Pk: {pk}</li>
-//     <li>Username: {username}</li>
-//     <li>Profile: {JSON.stringify(profile)}</li>
-//     <li>Calendar: {JSON.stringify(calendar)}</li>
-//     <li>Location: {JSON.stringify(location)}</li>
-//     <li>Image: {image?.href}</li>
-//   </ul>
-// </div>
-// );
-// };
 {
   /* {JSON.stringify({ pk, username, profile, location, image }, null, 2)} */
 }
@@ -932,18 +957,23 @@ const TimelinePage = (props) => {
   const { auth, isAuthed } = useContext(AuthContext);
   const [state, setState] = useState({});
 
+  const navigate = useNavigate();
+
   return (
     <Page title="Timeline">
       <pre>{JSON.stringify(state?.data, null, 2)}</pre>
       <Row className="mb-3" style={{ height: "4rem" }}>
         <Col className="d-grid">
-          <Button variant="success">
+          <Button
+            variant="success"
+            onClick={() => navigate(`${ROUTES.USER}/${auth.pk}`)}
+          >
             <User />
             &nbsp;<small>My Profile</small>
           </Button>
         </Col>
         <Col className="d-grid">
-          <Button variant="primary">
+          <Button variant="primary" onClick={() => navigate(ROUTES.CALENDAR)}>
             <BsFillCalendarCheckFill />
             &nbsp;<small>My Calendar</small>
           </Button>
@@ -951,17 +981,20 @@ const TimelinePage = (props) => {
       </Row>
       <Row className="mb-3" style={{ height: "4rem" }}>
         <Col className="d-grid">
-          <Button variant="dark">
+          <Button variant="dark" onClick={() => navigate(ROUTES.SEARCH)}>
             <Search />
             &nbsp;<small>Search</small>
           </Button>
         </Col>
         <Col className="d-grid">
-          <Button variant="secondary">
+          <Button variant="secondary" onClick={() => navigate(ROUTES.SHARE)}>
             <Share />
             &nbsp;<small>Share</small>
           </Button>
         </Col>
+      </Row>
+      <Row>
+        <Col>Content</Col>
       </Row>
     </Page>
   );
@@ -993,23 +1026,49 @@ const UserPage = (props) => {
   // is this our own profile? are we logged in?
   const isMe = isAuthed() && auth.pk === parseInt(pk);
 
+  const leftActionButton =
+    isAuthed() && !isMe ? (
+      <Button
+        variant="outline-success"
+        style={{
+          borderRadius: "25px",
+          height: "3rem",
+        }}
+        className="shadow"
+      >
+        <UserPlus />
+      </Button>
+    ) : null;
+
+  const rightActionButton =
+    isAuthed() && !isMe ? (
+      <Button
+        variant="outline-primary"
+        style={{
+          borderRadius: "25px",
+          height: "3rem",
+        }}
+        className="shadow"
+      >
+        <Mail />
+      </Button>
+    ) : (
+      <Button
+        variant="outline-primary"
+        style={{
+          borderRadius: "25px",
+          height: "3rem",
+        }}
+        className="shadow"
+      >
+        Edit
+      </Button>
+    );
+
   return (
     <Page title="User">
       <Row className="text-center align-items-center">
-        <Col>
-          {isAuthed() && !isMe && (
-            <Button
-              variant="outline-success"
-              style={{
-                borderRadius: "25px",
-                height: "3rem",
-              }}
-              className="shadow"
-            >
-              <UserPlus />
-            </Button>
-          )}
-        </Col>
+        <Col>{leftActionButton}</Col>
         <Col className="text-center">
           <div className="frame mb-3">
             <img
@@ -1031,20 +1090,7 @@ const UserPage = (props) => {
           </h3>
           <span className="text-muted">@{state.data?.username}</span>
         </Col>
-        <Col>
-          {isAuthed() && !isMe && (
-            <Button
-              variant="outline-primary"
-              style={{
-                borderRadius: "25px",
-                height: "3rem",
-              }}
-              className="shadow"
-            >
-              <Mail />
-            </Button>
-          )}
-        </Col>
+        <Col>{rightActionButton}</Col>
       </Row>
       <Row>
         <Col>
@@ -1503,6 +1549,12 @@ const ChatPage = (props) => {
           {...prop}
         />
       ))}
+      {/* Account for the input field pinned to bottom */}
+      <div
+        style={{
+          height: "6rem",
+        }}
+      ></div>
       <ChatInput onSubmit={(body) => sendChat(pk, fk, body)} />
       {/* <pre>{JSON.stringify(state.data, null, 2)}</pre> */}
     </Page>
@@ -1525,7 +1577,7 @@ const App = () => {
   return (
     <>
       <AuthContext.Provider value={{ auth, setAuth, resetAuth, isAuthed }}>
-        <ToastContainer />
+        <ToastContainer autoClose={1500} newestOnTop={true} />
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<HomePage />} />
