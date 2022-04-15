@@ -95,7 +95,7 @@ def dump_date(dt):
     return datetime.datetime.strftime(dt, "%Y-%m-%d")
 
 
-LOCALHOST = "http://192.168.1.114:4000"
+LOCALHOST = "http://localhost:4000"
 SVC = SimpleNamespace(
     **{
         "auth": True,
@@ -1140,14 +1140,33 @@ class NetworkManager(BaseManager):
         db.session.commit()
         return True
 
-    def get_followers(self, pk, page=0, size=10):
-        q = db.session.query(NetworkModel).filter_by(dst_fk=pk)
+    def is_reciprocal(self, src_fk, dst_fk):
+        # given a->b, does b->a
+        network = (
+            db.session.query(NetworkModel)
+            .filter_by(src_fk=dst_fk, dst_fk=src_fk)
+            .first()
+        )
+        return bool(network)
 
+    def get_followers(self, pk, page=0, size=10):
+        # SRC: others
+        # DST: us
+        q = db.session.query(NetworkModel).filter_by(dst_fk=pk)
         total = q.count()
         pages = total // size
 
         networks = q.limit(size).offset(page * size)
         content = NetworkSchema(many=True).dump(networks)
+        # FIXME: reciprocity
+        [
+            c["network"].update(reciprocal=self.is_reciprocal(c["src_fk"], c["dst_fk"]))
+            if c.get("network")
+            else c.update(
+                network=dict(reciprocal=self.is_reciprocal(c["src_fk"], c["dst_fk"]))
+            )
+            for c in content
+        ]
         pags = {
             "content": content,
             "metadata": {
@@ -1161,6 +1180,8 @@ class NetworkManager(BaseManager):
         return pags
 
     def get_following(self, pk, page=0, size=10):
+        # SRC: us
+        # DST: others
         q = db.session.query(NetworkModel).filter_by(src_fk=pk)
 
         total = q.count()
@@ -1168,6 +1189,15 @@ class NetworkManager(BaseManager):
 
         networks = q.limit(size).offset(page * size)
         content = NetworkSchema(many=True).dump(networks)
+        # FIXME: reciprocity
+        [
+            c["network"].update(reciprocal=self.is_reciprocal(c["dst_fk"], c["src_fk"]))
+            if c.get("network")
+            else c.update(
+                network=dict(reciprocal=self.is_reciprocal(c["dst_fk"], c["src_fk"]))
+            )
+            for c in content
+        ]
         pags = {
             "content": content,
             "metadata": {
@@ -1543,6 +1573,16 @@ def update_network(pk):
 @app.route("/network/<int:pk>", methods=["DELETE"])
 def delete_network(pk):
     return Reply.success(data=network_manager.delete_network(pk))
+
+
+@app.route("/network/follow", methods=["POST"])
+def follow():
+    return Reply.success(data=network_manager.follow(**request.get_json()))
+
+
+@app.route("/network/unfollow", methods=["POST"])
+def unfollow():
+    return Reply.success(data=network_manager.unfollow(**request.get_json()))
 
 
 @app.route("/network/followers/<int:pk>", methods=["POST"])

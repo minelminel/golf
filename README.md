@@ -1,5 +1,9 @@
 # Golf
 
+![alt](./client/src/static/logo.png)
+
+[LOGO](https://www.brandcrowd.com/maker/logo/golf-ball-33641?text=whose%20away&colorPalette=grayscale)
+
 - for enums, 0 indicates "no preference"
 -
 

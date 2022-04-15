@@ -29,6 +29,7 @@ import {
   ButtonGroup,
   Card,
 } from "react-bootstrap";
+
 // ICONS
 import {
   Box,
@@ -46,7 +47,8 @@ import {
 import { AiFillCar } from "react-icons/ai";
 import { BiDrink, BiCopy } from "react-icons/bi";
 import { BsFillCalendarCheckFill } from "react-icons/bs";
-import { FaBeer, FaWalking, FaCoffee } from "react-icons/fa";
+import { FaBeer, FaWalking, FaCoffee, FaUserFriends } from "react-icons/fa";
+import { MdClear } from "react-icons/md";
 import { RiUserSharedFill } from "react-icons/ri";
 import {
   TiWeatherPartlySunny,
@@ -54,6 +56,7 @@ import {
   TiWeatherShower,
 } from "react-icons/ti";
 // END ICONS
+
 import { v4 as uuidv4 } from "uuid";
 import { ToastContainer, toast } from "react-toastify";
 import QRCode from "react-qr-code";
@@ -77,7 +80,7 @@ import "./App.css";
 import Logo from "./static/logo.png";
 
 const CONST = {
-  API: `http://192.168.1.114:4000`,
+  API: `http://localhost:4000`,
   DEBUG: false,
 };
 
@@ -418,30 +421,50 @@ const ChatInput = (props) => {
   const send = (e) => {
     console.log(`Send: ${input}`);
     props.onSubmit(input);
+    clear();
+  };
+
+  const clear = (e) => {
     setInput(``);
   };
 
+  const fontSize = "2rem";
+
   return (
-    <Container className="">
+    <Container>
       <Row
         className="fixed-bottom text-center"
         style={{
           margin: "0 auto",
           backgroundColor: "var(--bs-dark)",
           height: "6rem",
-          width: "90%",
         }}
       >
         <Col
           xs
-          sm={11}
-          md={8}
-          lg={7}
-          xl={5}
+          sm={10}
+          md={7}
+          lg={6}
+          xl={4}
           style={{
             margin: "0 auto",
+            lineHeight: fontSize,
           }}
         >
+          <Button
+            className="shadow"
+            variant="outline-secondary"
+            disabled={input.length < 1}
+            onClick={clear}
+            style={{
+              borderRadius: "8px",
+              marginRight: "1rem",
+              lineHeight: fontSize,
+            }}
+            title="Clear"
+          >
+            <MdClear size={20} />
+          </Button>
           <input
             onChange={type}
             value={input}
@@ -450,19 +473,23 @@ const ChatInput = (props) => {
             placeholder="Start typing..."
             style={{
               padding: "5px",
+              margin: "3px",
               borderRadius: "8px",
               border: "1px solid gray",
-              width: "75%",
+              width: "70%",
               marginTop: "0.5rem",
             }}
           />
           <Button
+            className="shadow"
             disabled={input.length < 1}
             onClick={send}
             style={{
               borderRadius: "8px",
               marginLeft: "1rem",
+              lineHeight: fontSize,
             }}
+            title="Send"
           >
             <Send size={20} />
           </Button>
@@ -524,18 +551,38 @@ const PreferenceTray = (props) => {
   const { profile = {} } = props;
   const { mobility, drinking, weather } = profile;
   return (
-    <Row className="text-center mb-4">
+    <Row
+      className="text-center mb-4"
+      style={{
+        color: "#64D3D6",
+      }}
+    >
       <Col>
         {ENUMS.mobility[mobility]}
-        <div>{DESCRIPTIONS.mobility[mobility]}</div>
+        <div
+          className="mt-2"
+          style={{ color: "var(--bs-light)", fontSize: "0.85rem" }}
+        >
+          {DESCRIPTIONS.mobility[mobility]}
+        </div>
       </Col>
       <Col>
         {ENUMS.drinking[drinking]}
-        <div>{DESCRIPTIONS.drinking[drinking]}</div>
+        <div
+          className="mt-2"
+          style={{ color: "var(--bs-light)", fontSize: "0.85rem" }}
+        >
+          {DESCRIPTIONS.drinking[drinking]}
+        </div>
       </Col>
       <Col>
         {ENUMS.weather[weather]}
-        <div>{DESCRIPTIONS.weather[weather]}</div>
+        <div
+          className="mt-2"
+          style={{ color: "var(--bs-light)", fontSize: "0.85rem" }}
+        >
+          {DESCRIPTIONS.weather[weather]}
+        </div>
       </Col>
     </Row>
   );
@@ -572,7 +619,7 @@ const UserItem = (props) => {
       <Badge
         bg={actionProps.variant}
         text={actionProps.variant === "light" ? "dark" : "light"}
-        style={{ cursor: "pointer" }}
+        style={{ ...(actionProps.onClick ? { cursor: "pointer" } : {}) }}
         onClick={actionProps.onClick}
       >
         {actionProps.text}
@@ -594,11 +641,9 @@ const UserItem = (props) => {
           <Col className="col-2">
             <div className="center">
               <img
-                // alt={`${ours ? dst?.username : src?.username}`}
-                // title={`/images/${ours ? dst?.username : src?.username}`}
+                alt={`@${username}`}
+                title={`@${username}`}
                 onClick={onClick}
-                alt={`${username}`}
-                title={`${username}`}
                 src={
                   image?.href ||
                   `https://cdn.theatlantic.com/media/mt/science/cat_caviar.jpg`
@@ -618,7 +663,6 @@ const UserItem = (props) => {
                 <span className="fw-bold">{profile.alias}&nbsp;</span>@
                 {username}
               </span>
-              {/* <span className="pull-right">👟 🍻 🌥</span> */}
             </Row>
             <Row>
               <small className="px-0 text-muted">{location.label}</small>
@@ -858,13 +902,9 @@ const Page = (props) => {
             lg={7}
             xl={5}
             className="shadow"
-            style={
-              {
-                // borderLeft: "1px solid #e7e7e7",
-                // borderRight: "1px solid #e7e7e7",
-                // backgroundColor: "var(--bs-light)",
-              }
-            }
+            style={{
+              margin: "0 auto",
+            }}
           >
             <Navigation />
             {/* <h6 className="text-center text-muted">{title}</h6> */}
@@ -1054,7 +1094,13 @@ const TimelinePage = (props) => {
         </Col>
       </Row>
       <Row>
-        <Col>Content</Col>
+        <Col>
+          {state?.data?.content ? (
+            state.data.content.map((element) => element)
+          ) : (
+            <div>Nothing to display</div>
+          )}
+        </Col>
       </Row>
     </Page>
   );
@@ -1191,11 +1237,6 @@ const UserPage = (props) => {
               </Col>
             </Row>
             <PreferenceTray profile={state.data?.profile} />
-            {/* <Row className="text-center">
-              <Col>{Enums.mobility[state.data?.profile.mobility]}</Col>
-              <Col>{Enums.drinking[state.data?.profile.drinking]}</Col>
-              <Col>{Enums.weather[state.data?.profile.weather]}</Col>
-            </Row> */}
             <CalendarTray content={state.data?.calendar || []} />
           </Container>
         </Col>
@@ -1206,49 +1247,93 @@ const UserPage = (props) => {
             className="mt-4 shadow"
             style={{
               height: "160px",
-              // backgroundImage:
-              // "url(https://www.cloudways.com/blog/wp-content/uploads/MapPress-Easy-Google-Map-Plugin.jpg)",
             }}
           >
             <MapPanel {...(state.data?.location || {})} />
           </div>
         </Col>
       </Row>
-      {/* <pre>{JSON.stringify(state?.data, null, 2)}</pre> */}
+      {CONST.DEBUG && <pre>{JSON.stringify(state?.data, null, 2)}</pre>}
     </Page>
   );
 };
 
 const NetworkPage = (props) => {
   const { auth } = useContext(AuthContext);
+  const request = useRequest(auth);
+
+  const [semaphore, setSemaphore] = useState(0);
   const [followers, setFollowers] = useState(paginationProps);
   const [following, setFollowing] = useState(paginationProps);
 
   React.useEffect(() => {
     fetchFollowers();
     fetchFollowing();
-  }, []);
+  }, [semaphore]);
 
   const fetchFollowing = () => {
-    fetch(`${CONST.API}/network/following/${auth.pk}`, {
+    request(`${CONST.API}/network/following/${auth.pk}`, {
       method: "POST",
     })
       .then((response) => response.json())
       .then((json) => setFollowing(json))
       .catch((error) => {
         console.error(error);
-        toast("Error fetching network", { type: "error" });
+        toast("Error fetching following", { type: "error" });
       });
   };
 
   const fetchFollowers = () => {
-    fetch(`${CONST.API}/network/followers/${auth.pk}`, {
+    request(`${CONST.API}/network/followers/${auth.pk}`, {
       method: "POST",
     })
       .then((response) => response.json())
       .then((json) => setFollowers(json))
       .catch((error) => {
         console.error(error);
+        toast(`Error fetching followers`, { type: "error" });
+      });
+  };
+
+  const follow = (src_fk, dst_fk) => {
+    console.log(`follow:`, src_fk, dst_fk);
+    request(`${CONST.API}/network/follow`, {
+      method: "POST",
+      json: {
+        src_fk,
+        dst_fk,
+      },
+    })
+      .then((response) => response.json())
+      .then((json) => {
+        console.log(json);
+        toast(`Followed`);
+        setSemaphore(semaphore + 1);
+      })
+      .catch((error) => {
+        console.error(error);
+        toast(`Error following`, { type: "error" });
+      });
+  };
+
+  const unfollow = (src_fk, dst_fk) => {
+    console.log(`unfollow:`, src_fk, dst_fk);
+    request(`${CONST.API}/network/unfollow`, {
+      method: "POST",
+      json: {
+        src_fk,
+        dst_fk,
+      },
+    })
+      .then((response) => response.json())
+      .then((json) => {
+        console.log(json);
+        toast(`Unfollowed`);
+        setSemaphore(semaphore + 1);
+      })
+      .catch((error) => {
+        console.error(error);
+        toast(`Error unfollowing`, { type: "error" });
       });
   };
 
@@ -1261,19 +1346,25 @@ const NetworkPage = (props) => {
           className="mt-4"
         >
           <ListGroup className="mt-3" variant="flush">
-            {followers.data?.content.map((element) => (
-              <ListGroup.Item key={uuidv4()}>
-                <UserItem
-                  type="row"
-                  {...element.src}
-                  actionProps={{
+            {followers.data?.content.map((element) => {
+              const action = element?.network?.reciprocal
+                ? {
+                    text: <FaUserFriends size={18} />,
+                    variant: "dark",
+                  }
+                : {
                     text: "Follow",
-                    variant: "primary",
-                    onClick: () => {},
-                  }}
-                />
-              </ListGroup.Item>
-            ))}
+                    variant: "success",
+                    onClick: () => {
+                      follow(auth.pk, element.pk);
+                    },
+                  };
+              return (
+                <ListGroup.Item key={uuidv4()}>
+                  <UserItem type="row" {...element.src} actionProps={action} />
+                </ListGroup.Item>
+              );
+            })}
           </ListGroup>
           {CONST.DEBUG && <pre>{JSON.stringify(followers?.data, null, 2)}</pre>}
         </Tab>
@@ -1283,19 +1374,20 @@ const NetworkPage = (props) => {
           className="mt-4"
         >
           <ListGroup className="mt-3" variant="flush">
-            {following.data?.content.map((element) => (
-              <ListGroup.Item key={uuidv4()}>
-                <UserItem
-                  type="row"
-                  {...element.dst}
-                  actionProps={{
-                    text: "Unfollow",
-                    variant: "primary",
-                    onClick: () => {},
-                  }}
-                />
-              </ListGroup.Item>
-            ))}
+            {following.data?.content.map((element) => {
+              const action = {
+                text: "Unfollow",
+                variant: "primary",
+                onClick: () => {
+                  unfollow(auth.pk, element.pk);
+                },
+              };
+              return (
+                <ListGroup.Item key={uuidv4()}>
+                  <UserItem type="row" {...element.dst} actionProps={action} />
+                </ListGroup.Item>
+              );
+            })}
           </ListGroup>
           {CONST.DEBUG && <pre>{JSON.stringify(following?.data, null, 2)}</pre>}
         </Tab>
@@ -1778,6 +1870,11 @@ const SharePage = (props) => {
         <Col className="text-center d-grid">
           <div className="pb-4">Or click below to copy the link</div>
           <Button
+            style={{
+              width: "80%",
+              margin: "0 auto",
+            }}
+            className="shadow"
             onClick={() => {
               console.log("copy to clipboard");
               navigator.clipboard
@@ -1923,7 +2020,7 @@ const App = () => {
   return (
     <>
       <AuthContext.Provider value={{ auth, setAuth, resetAuth, isAuthed }}>
-        <ToastContainer autoClose={1500} newestOnTop={true} />
+        <ToastContainer autoClose={100} newestOnTop={true} />
         <BrowserRouter>
           <Routes>
             <Route path={`${ROUTES.HOME}`} element={<HomePage />} />
