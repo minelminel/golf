@@ -47,9 +47,10 @@ import {
 import { AiFillCar } from "react-icons/ai";
 import { BiDrink, BiCopy } from "react-icons/bi";
 import { BsFillCalendarCheckFill } from "react-icons/bs";
-import { FaBeer, FaWalking, FaCoffee, FaUserFriends } from "react-icons/fa";
+import { FaBeer, FaWalking, FaCoffee } from "react-icons/fa";
 import { MdClear } from "react-icons/md";
 import { RiUserSharedFill } from "react-icons/ri";
+import { SiHandshake } from "react-icons/si";
 import {
   TiWeatherPartlySunny,
   TiWeatherSunny,
@@ -80,9 +81,10 @@ import "./App.css";
 import Logo from "./static/logo.png";
 
 const CONST = {
-  API: `http://localhost:4000`,
+  API: `http://192.168.1.114:4000/api`,
   DEBUG: false,
 };
+console.warn(`DEBUG MODE ENABLED: ${CONST.DEBUG}`);
 
 const ROUTES = {
   HOME: "/",
@@ -193,29 +195,31 @@ const RegisterForm = (props) => {
   const onSubmit = (e) => {
     e.preventDefault();
     const { email, username, password } = e.target;
-    handleSubmit({
-      email: email.value,
-      username: username.value,
-      password: password.value,
-    });
+    const creds = {
+      email: email?.value,
+      username: username?.value,
+      password: password?.value,
+    };
+    console.log(creds);
+    handleSubmit(creds);
   };
 
-  return (
+  return loggedIn ? (
+    <BannerBlock
+      bg="info"
+      text={loggedIn ? "It looks like you're already logged in" : byline}
+    />
+  ) : (
     <Form onSubmit={onSubmit} id="register">
-      <fieldset disabled={loggedIn}>
-        {loggedIn && (
-          <BannerBlock
-            bg="warning"
-            text={loggedIn ? "It looks like you're already logged in" : byline}
-          />
-        )}
+      <fieldset>
         <Form.Group>
           <InputGroup className="mb-3 shadow">
             <InputGroup.Text>@</InputGroup.Text>
             <FormControl
               placeholder="Username"
-              id="register.username"
+              id="username"
               required
+              value={`michael`}
             />
           </InputGroup>
         </Form.Group>
@@ -225,8 +229,9 @@ const RegisterForm = (props) => {
             className="mb-2 shadow"
             type="email"
             placeholder="Enter email"
-            id="register.email"
+            id="email"
             required
+            value={`michael@mail.com`}
           />
           <Form.Text className="text-muted">No spam, we promise</Form.Text>
         </Form.Group>
@@ -237,8 +242,9 @@ const RegisterForm = (props) => {
             className="shadow"
             type="password"
             placeholder="Password"
-            id="register.password"
+            id="password"
             required
+            value={`michael`}
           />
         </Form.Group>
         <Button variant="primary" type="submit">
@@ -255,18 +261,18 @@ const LoginForm = (props) => {
   const onSubmit = (e) => {
     e.preventDefault();
     const { username, password } = e.target;
-    handleSubmit({ username: username.value, password: password.value });
+    const creds = { username: username?.value, password: password?.value };
+    handleSubmit(creds);
   };
 
-  return (
+  return loggedIn ? (
+    <BannerBlock
+      bg="info"
+      text={loggedIn ? "It looks like you're already logged in" : byline}
+    />
+  ) : (
     <Form onSubmit={onSubmit} id="login">
-      <fieldset disabled={loggedIn}>
-        {loggedIn && (
-          <BannerBlock
-            bg="warning"
-            text={loggedIn ? "It looks like you're already logged in" : byline}
-          />
-        )}
+      <fieldset>
         <Form.Group>
           <InputGroup className="mb-3 shadow">
             <InputGroup.Text>@</InputGroup.Text>
@@ -350,17 +356,24 @@ const InboxItem = (props) => {
           }}
         />
       </div>
-      <div className="ms-3 me-auto">
+      <div className="ms-3 me-auto truncate">
         <div className="align-middle">
           <strong>@{ours ? dst?.username : src?.username}</strong>
           &nbsp;
           {ours && !read ? "🔵" : null}
         </div>
-        {/* TODO: FIXME ellipsis */}
-        <div>
+        <p
+          style={{
+            lineBreak: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            wordWrap: "break-word",
+            maxWidth: "16rem",
+          }}
+        >
           {ours ? `You: ` : ``}
-          {body.length > 24 ? body.slice(0, 24) + "..." : body}
-        </div>
+          {body}
+        </p>
       </div>
       <div
         className="text-muted float-right"
@@ -548,8 +561,8 @@ const CalendarTray = (props) => {
 };
 
 const PreferenceTray = (props) => {
-  const { profile = {} } = props;
-  const { mobility, drinking, weather } = profile;
+  // const { profile = {} } = props;
+  const { mobility, drinking, weather } = props;
   return (
     <Row
       className="text-center mb-4"
@@ -557,6 +570,21 @@ const PreferenceTray = (props) => {
         color: "#64D3D6",
       }}
     >
+      {/* {Object.entries({ mobility, drinking, weather })
+        .filter(([key, value]) => value)
+        .map(([key, value]) => {
+          return (
+            <Col>
+              {ENUMS}[key][value]
+              <div
+                className="mt-2"
+                style={{ color: "var(--bs-light)", fontSize: "0.85rem" }}
+              >
+                {DESCRIPTIONS[key][value]}
+              </div>
+            </Col>
+          );
+        })} */}
       <Col>
         {ENUMS.mobility[mobility]}
         <div
@@ -627,6 +655,8 @@ const UserItem = (props) => {
     </div>
   );
 
+  const href = `${ROUTES.USER}/${pk}`;
+
   return (
     <ListGroup.Item
       as="li"
@@ -660,8 +690,8 @@ const UserItem = (props) => {
           <Col>
             <Row>
               <span className="px-0">
-                <span className="fw-bold">{profile.alias}&nbsp;</span>@
-                {username}
+                <span className="fw-bold">{profile.alias}&nbsp;</span>
+                <a href={href}>@{username}</a>
               </span>
             </Row>
             <Row>
@@ -674,7 +704,7 @@ const UserItem = (props) => {
         {type === "card" && (
           <Row>
             <Col className="px-0 mt-1">
-              <CalendarTray />
+              <CalendarTray content={calendar} />
             </Col>
           </Row>
         )}
@@ -734,7 +764,7 @@ const useRequest = (auth) => {
     console.debug(`useRequest:`, url, kwargs, headers);
 
     const response = await fetch(
-      params ? `${url}?${URLSearchParams(params).toString()}` : url,
+      params ? `${url}?${new URLSearchParams(params).toString()}` : url,
       kwargs
     );
 
@@ -772,6 +802,8 @@ const useAuth = () => {
 
 const Navigation = (props) => {
   const { auth, resetAuth, isAuthed } = useContext(AuthContext);
+  const request = useRequest(auth);
+
   const [notifications, setNotifications] = useState();
   const navigate = useNavigate();
   const { brand } = props;
@@ -783,11 +815,12 @@ const Navigation = (props) => {
   }, []);
 
   const gofetch = () => {
-    fetch(`${CONST.API}/notifications/${auth.pk}`, {
+    request(`${CONST.API}/notifications/${auth.pk}`, {
       method: "POST",
     })
       .then((response) => response.json())
       .then((json) => {
+        console.log(json);
         setNotifications(json);
       })
       .catch((error) => {
@@ -917,20 +950,22 @@ const Page = (props) => {
 };
 
 const HomePage = (props) => {
-  const { setAuth, isAuthed } = useContext(AuthContext);
+  const { auth, setAuth, isAuthed } = useContext(AuthContext);
 
   const navigate = useNavigate();
+  const request = useRequest(auth);
 
   const handleRegister = (creds) => {
-    fetch(`${CONST.API}/auth/register`, {
+    request(`${CONST.API}/auth/register`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(creds),
+      json: creds,
     })
       .then((response) => response.json())
       .then((json) => {
+        if (json.error) {
+          throw new Error(json.error);
+        }
+        // TODO: redirect here to "quickstart" workflow
         setAuth(json.data);
         toast("Register Successful", { type: "success" });
         navigate(ROUTES.TIMELINE, { replace: true });
@@ -942,12 +977,9 @@ const HomePage = (props) => {
   };
 
   const handleLogin = (creds) => {
-    fetch(`${CONST.API}/auth/login`, {
+    request(`${CONST.API}/auth/login`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(creds),
+      json: creds,
     })
       .then((response) => response.json())
       .then((json) => {
@@ -1023,12 +1055,12 @@ const HomePage = (props) => {
             fill
             variant="tabs"
             defaultActiveKey="login"
-            onSelect={() => {
-              // allow tab change to propagate before checking resize
-              setTimeout(() => {
-                window.scrollTo(0, document.body.scrollHeight);
-              }, 25);
-            }}
+            // onSelect={() => {
+            //   // allow tab change to propagate before checking resize
+            //   setTimeout(() => {
+            //     window.scrollTo(0, document.body.scrollHeight);
+            //   }, 25);
+            // }}
           >
             {/* REGISTER */}
             <Tab eventKey="register" title="Register" className="mt-4">
@@ -1112,6 +1144,7 @@ const UserPage = (props) => {
   const { pk } = useParams();
 
   const navigate = useNavigate();
+  const request = useRequest(auth);
 
   const between = "1rem";
 
@@ -1120,7 +1153,7 @@ const UserPage = (props) => {
   }, [pk]);
 
   const gofetch = () => {
-    fetch(`${CONST.API}/users/${pk}`, {
+    request(`${CONST.API}/users/${pk}`, {
       method: "GET",
     })
       .then((response) => response.json())
@@ -1232,11 +1265,11 @@ const UserPage = (props) => {
                     color: "black",
                   }}
                 >
-                  3.2
+                  {state.data?.profile?.handicap}
                 </span>
               </Col>
             </Row>
-            <PreferenceTray profile={state.data?.profile} />
+            <PreferenceTray {...(state.data?.profile || {})} />
             <CalendarTray content={state.data?.calendar || []} />
           </Container>
         </Col>
@@ -1296,7 +1329,6 @@ const NetworkPage = (props) => {
   };
 
   const follow = (src_fk, dst_fk) => {
-    console.log(`follow:`, src_fk, dst_fk);
     request(`${CONST.API}/network/follow`, {
       method: "POST",
       json: {
@@ -1317,7 +1349,6 @@ const NetworkPage = (props) => {
   };
 
   const unfollow = (src_fk, dst_fk) => {
-    console.log(`unfollow:`, src_fk, dst_fk);
     request(`${CONST.API}/network/unfollow`, {
       method: "POST",
       json: {
@@ -1349,14 +1380,14 @@ const NetworkPage = (props) => {
             {followers.data?.content.map((element) => {
               const action = element?.network?.reciprocal
                 ? {
-                    text: <FaUserFriends size={18} />,
+                    text: <SiHandshake size={18} />,
                     variant: "dark",
                   }
                 : {
                     text: "Follow",
                     variant: "success",
                     onClick: () => {
-                      follow(auth.pk, element.pk);
+                      follow(auth.pk, element.src_fk);
                     },
                   };
               return (
@@ -1379,7 +1410,7 @@ const NetworkPage = (props) => {
                 text: "Unfollow",
                 variant: "primary",
                 onClick: () => {
-                  unfollow(auth.pk, element.pk);
+                  unfollow(auth.pk, element.dst_fk);
                 },
               };
               return (
@@ -1398,6 +1429,8 @@ const NetworkPage = (props) => {
 
 const CalendarPage = (props) => {
   const { auth } = useContext(AuthContext);
+  const request = useRequest(auth);
+
   const [state, setState] = useState(paginationProps);
   const [semaphore, setSemaphore] = useState(0);
 
@@ -1408,18 +1441,12 @@ const CalendarPage = (props) => {
   }, [semaphore]);
 
   const gofetch = () => {
-    fetch(
-      `${CONST.API}/calendar/query?` +
-        new URLSearchParams({
-          fk: auth.pk,
-        }).toString(),
-      {
-        method: "POST",
-        headers: {
-          Token: auth.token,
-        },
-      }
-    )
+    request(`${CONST.API}/calendar/query`, {
+      method: "POST",
+      params: {
+        fk: auth.pk,
+      },
+    })
       .then((response) => response.json())
       .then((json) => {
         console.log(json);
@@ -1433,17 +1460,14 @@ const CalendarPage = (props) => {
 
   const handleToggle = (date, time, available) => {
     const url = `${CONST.API}/calendar/availability`;
-    fetch(url, {
+    request(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+      json: {
         fk: auth.pk,
         date: date,
         time: time,
         available: available,
-      }),
+      },
     })
       .then((response) => response.json())
       .then((json) => {
@@ -1520,25 +1544,28 @@ const CalendarPage = (props) => {
 };
 
 const SearchPage = (props) => {
+  // TODO: pass search props to higher-level component to
+  // preserve the state of the form when navigating back.
   const { auth } = useContext(AuthContext);
-  const [state, setState] = useState(requestProps);
-
-  const navigate = useNavigate();
   const request = useRequest(auth);
 
-  const {
-    register,
-    handleSubmit,
-    watch,
-    formState: { errors },
-  } = useForm();
+  const [state, setState] = useState(requestProps);
+  const [query, setQuery] = useState(``); // username
+
+  const navigate = useNavigate();
 
   React.useEffect(() => {
-    handleQuery();
+    // no-op
   }, []);
 
+  const handleInput = (event) => {
+    const name = event.target.value;
+    setQuery(name);
+    name.length > 0 && handleQuery({ username: name, alias: name });
+  };
+
   const handleQuery = (params) => {
-    request(`${CONST.API}/search/query`, { method: "POST" })
+    request(`${CONST.API}/search/query`, { method: "POST", json: params })
       .then((response) => response.json())
       .then((json) => {
         console.log(json);
@@ -1553,83 +1580,44 @@ const SearchPage = (props) => {
 
   return (
     <Page title="Search">
-      {/* <pre>🟦⬜️🟦 🟦🟦⬜️ ⬜️⬜️⬜️</pre> */}
       <Row>
-        <Col>
-          <form onSubmit={handleSubmit(handleQuery)}>
-            {/* register your input into the hook by invoking the "register" function */}
-            <fieldset>
-              <legend>Username</legend>
-              <label>@</label>
-              <input />
-            </fieldset>
-
-            <fieldset>
-              <legend>Location</legend>
-              <label>Distance</label>
-              <input
-                type="range"
-                min={10}
-                max={100000}
-                step={10}
-                defaultValue={100000}
-                {...register("distance")}
-              />
-            </fieldset>
-
-            <fieldset>
-              <legend>Profile</legend>
-              <label>foo</label>
-              <input />
-            </fieldset>
-
-            <fieldset>
-              <legend>Calendar</legend>
-              <label>bar</label>
-              <input />
-            </fieldset>
-
-            <fieldset>
-              <legend>Network</legend>
-              <label>zed</label>
-              <input />
-            </fieldset>
-
-            {/* include validation with required or other standard HTML validation rules */}
-            {/* <label>criteria</label> */}
-            {/* <input {...register("criteria", { required: true })} /> */}
-            {/* errors will return when field validation fails  */}
-            {/* {errors.criteria && <span>This field is required</span>} */}
-            <fieldset>
-              <legend></legend>
-              <Button type="submit">Search</Button>
-            </fieldset>
-          </form>
-          <hr />
+        <Col className="mt-4" style={{ margin: "0 auto" }}>
+          <InputGroup className="mb-3">
+            <InputGroup.Text>@</InputGroup.Text>
+            <FormControl
+              placeholder="Name or username"
+              value={query}
+              onInput={handleInput}
+            />
+          </InputGroup>
         </Col>
       </Row>
       <Row>
         <Col>
-          {state.data?.metadata?.total && (
-            <small className="text-muted">{`${state.data.metadata.total} results`}</small>
+          {query && !state.data?.metadata?.total && (
+            <small className="text-muted">No results</small>
           )}
           {/* Pagination-first component */}
           <ListGroup className="mt-3" variant="flush">
-            {state.data?.content.map((element) => (
-              <ListGroup.Item key={uuidv4()}>
-                <UserItem
-                  type="card"
-                  {...element}
-                  actionProps={{
-                    text: <RiUserSharedFill size={24} />,
-                    variant: "light",
-                    onClick: () => {
-                      navigate(`${ROUTES.USER}/${element.pk}`);
-                    },
-                  }}
-                />
-              </ListGroup.Item>
-            ))}
+            {query &&
+              state.data?.content.map(
+                (element) =>
+                  element.pk !== auth.pk && (
+                    <ListGroup.Item key={uuidv4()}>
+                      <UserItem
+                        type="card"
+                        {...element}
+                        actionProps={{
+                          text: <RiUserSharedFill size={24} />,
+                          variant: "light",
+                          onClick: () => {
+                            navigate(`${ROUTES.USER}/${element.pk}`);
+                          },
+                        }}
+                      />
+                    </ListGroup.Item>
+                  )
+              )}
             {/* PAGINATION LINKS */}
             {state?.data?.metadata?.links?.next && (
               <ListGroup.Item key={uuidv4()}>
@@ -1642,13 +1630,14 @@ const SearchPage = (props) => {
         </Col>
       </Row>
 
-      {CONST.DEBUG && <pre>{JSON.stringify(state?.data, null, 2)}</pre>}
+      {CONST.DEBUG && <pre>{JSON.stringify(state.data, null, 2)}</pre>}
     </Page>
   );
 };
 
 const InboxPage = (props) => {
   const { auth } = useContext(AuthContext);
+  const request = useRequest(auth);
   const [state, setState] = useState(paginationProps);
 
   const navigate = useNavigate();
@@ -1659,17 +1648,18 @@ const InboxPage = (props) => {
   }, []);
 
   const gofetch = () => {
-    fetch(`${CONST.API}/conversations/${auth.pk}`, {
+    request(`${CONST.API}/conversations/${auth.pk}`, {
       method: "GET",
-      headers: {
-        Token: auth.token,
-      },
     })
       .then((response) => response.json())
       .then((json) => {
         setState(json);
       })
       .catch((error) => console.error(error));
+  };
+
+  const acknowledgeNotification = () => {
+    console.log(`ackNot`);
   };
 
   return (
@@ -1682,6 +1672,7 @@ const InboxPage = (props) => {
             key={uuidv4()}
             ours={ours}
             onClick={() => {
+              // acknowledgeNotification({ src_fk: auth.pk, dst_fk: });
               navigate(ROUTES.CHAT, {
                 state: { fk: fk },
               });
@@ -1718,6 +1709,8 @@ const DefaultPage = (props) => {
 
 const ChatPage = (props) => {
   const { auth } = useContext(AuthContext);
+  const request = useRequest(auth);
+
   const [state, setState] = useState({
     ...paginationProps,
     context: { dst: null, src: null },
@@ -1738,12 +1731,8 @@ const ChatPage = (props) => {
   }, []);
 
   const gofetch = (src, dst) => {
-    console.log(`Loading chat with ${src} and ${dst}`);
-    fetch(`${CONST.API}/conversations/${src}/${dst}`, {
+    request(`${CONST.API}/conversations/${src}/${dst}`, {
       method: "GET",
-      headers: {
-        Token: auth.token,
-      },
     })
       .then((response) => response.json())
       .then((json) => {
@@ -1757,20 +1746,13 @@ const ChatPage = (props) => {
   };
 
   const sendChat = (src, dst, body) => {
-    console.log(`Sending message from ${src} to ${dst}: ${body}`);
-    fetch(`${CONST.API}/messages`, {
+    request(`${CONST.API}/messages`, {
       method: "POST",
-      headers: {
-        Token: auth.token,
-      },
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+      json: {
         src_fk: src,
         dst_fk: dst,
         body: body,
-      }),
+      },
     })
       .then((response) => response.json())
       .then((json) => {

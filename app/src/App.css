@@ -102,6 +102,13 @@ ul {
   list-style-type: none;
 }
 
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
 .bordered {
   border: 1px dashed royalblue;
 }

@@ -3,8 +3,9 @@
 # docker-compose down
 version: '3.8'
 services:
+
+  ### database ###
   db:
-    # image: postgres:14.1-alpine
     image: postgis/postgis
     restart: always
     environment:
@@ -15,17 +16,78 @@ services:
     volumes: 
       # - db:/var/lib/postgresql/data
       - ./db:/db
-  mq:
-    image: rabbitmq:3-management
-    restart: always
-    environment:
-      - RABBITMQ_DEFAULT_USER=rabbit
-      - RABBITMQ_DEFAULT_PASS=rabbit
+  
+  ### broker ###
+  # mq:
+  #   image: rabbitmq:3-management
+  #   restart: always
+  #   environment:
+  #     - RABBITMQ_DEFAULT_USER=rabbit
+  #     - RABBITMQ_DEFAULT_PASS=rabbit
+  #   ports:
+  #     - '5672:5672'
+  #     - '15672:15672'
+  #   volumes: []
+
+  ### backend ###
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    image: whoseaway-api
+    command: python app.py -c docker run -h 0.0.0.0 --reload
     ports:
-      - '5672:5672'
-      - '15672:15672'
-    volumes: []
+      - 4000:4000
+    volumes:
+      - ./api:/src/ # enable hot reload
+      - ./data:/data
+    labels: {}
+    environment:
+      FLASK_ENV: "docker"
+      SQL_HOST: "db"
+      SQL_PORT: "5432"
+    depends_on:
+      - db
+    networks:
+      - default
+
+  ### frontend ###
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: whoseaway-app
+    ports:
+      - 3000:3000
+    volumes:
+      - ./app:/src/ # enable hot reload
+      - ./data:/data
+    labels: {}
+    depends_on:
+      - api
+    environment:
+      REACT_APP_ENV: "docker"
+    networks:
+      - default
+
+  ### proxy ###
+  proxy:
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
+    image: whoseaway-proxy
+    ports:
+      - 8080:80
+    depends_on:
+      - app
+      - api
+    labels:
+      app: "whoseaway"
+      description: "social play"
+    networks:
+      - default
 
 volumes:
   db:
     driver: local
+  default:

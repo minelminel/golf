@@ -1,64 +1,64 @@
-import json
-import time
-import random
-from pprint import pprint
+# import json
+# import time
+# import random
+# from pprint import pprint
 
-import requests
+# import requests
 
-url = "http://localhost:4000"
+# url = "http://localhost:4000"
 
-# CREATE USERS
-payload = {
-    "email": "bob@example.com",
-    "username": "bob",
-    "password": "password",
-}
-response = requests.post(url + "/users", json=payload)
-print("Create User:", response)
-bob = response.json()["data"]
-b = bob["pk"]
-pprint(bob)
+# # CREATE USERS
+# payload = {
+#     "email": "bob@example.com",
+#     "username": "bob",
+#     "password": "password",
+# }
+# response = requests.post(url + "/users", json=payload)
+# print("Create User:", response)
+# bob = response.json()["data"]
+# b = bob["pk"]
+# pprint(bob)
 
-payload = {
-    "email": "alice@example.com",
-    "username": "alice",
-    "password": "password",
-}
-response = requests.post(url + "/users", json=payload)
-print("Create User:", response)
-alice = response.json()["data"]
-a = alice["pk"]
-pprint(alice)
+# payload = {
+#     "email": "alice@example.com",
+#     "username": "alice",
+#     "password": "password",
+# }
+# response = requests.post(url + "/users", json=payload)
+# print("Create User:", response)
+# alice = response.json()["data"]
+# a = alice["pk"]
+# pprint(alice)
 
-# FETCH ALL BOB'S MESSAGES
-response = requests.get(url + "/conversations/{}".format(b))
-print("Bob Conversations:", response)
-pprint(response.json()["data"])
+# # FETCH ALL BOB'S MESSAGES
+# response = requests.get(url + "/conversations/{}".format(b))
+# print("Bob Conversations:", response)
+# pprint(response.json()["data"])
 
-# FETCH BOB'S CONVO WITH ALICE
-response = requests.get(url + "/conversations/{}/{}".format(b, a))
-print("Bob & Alice Conversation:", response)
-pprint(response.json()["data"])
+# # FETCH BOB'S CONVO WITH ALICE
+# response = requests.get(url + "/conversations/{}/{}".format(b, a))
+# print("Bob & Alice Conversation:", response)
+# pprint(response.json()["data"])
 
-# SEND A MESSAGE FROM BOB TO ALICE
-payload = {
-    "src_fk": b,
-    "dst_fk": a,
-    "body": "hello world!",
-}
-response = requests.post(url + "/messages", json=payload)
-print("Bob Sending Message:", response)
-pprint(response.json()["data"])
+# # SEND A MESSAGE FROM BOB TO ALICE
+# payload = {
+#     "src_fk": b,
+#     "dst_fk": a,
+#     "body": "hello world!",
+# }
+# response = requests.post(url + "/messages", json=payload)
+# print("Bob Sending Message:", response)
+# pprint(response.json()["data"])
 
-# FETCH ALL ALICE'S MESSAGES
-response = requests.get(url + "/conversations/{}".format(a))
-print("Bob Conversations:", response)
-pprint(response.json()["data"])
+# # FETCH ALL ALICE'S MESSAGES
+# response = requests.get(url + "/conversations/{}".format(a))
+# print("Bob Conversations:", response)
+# pprint(response.json()["data"])
 
-# FETCH ALICE'S CONVO WITH ALICE
-response = requests.get(url + "/conversations/{}/{}".format(a, b))
-print("Alice & Bob Conversation:", response)
-pprint(response.json()["data"])
+# # FETCH ALICE'S CONVO WITH ALICE
+# response = requests.get(url + "/conversations/{}/{}".format(a, b))
+# print("Alice & Bob Conversation:", response)
+# pprint(response.json()["data"])
 
 # send a message from bob to alice
 # fetch messages for alice

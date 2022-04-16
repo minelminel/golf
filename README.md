@@ -208,3 +208,31 @@ todo:
 ```bash
 curl -s localhost:4000 | jq -r 'keys[]'
 ```
+
+---
+
+# Walkaway Notes
+
+- make the landing page fancy, CTA funnel
+- finish up account settings ui/workflows
+- email service, password reset, verification
+- inbox/chat acknowledge notifications
+- referral backend workflow, callback from URL
+- emoji calendar export/display
+- public profile view (?)
+- location based search & recommendations
+- timeline card component
+- "Challenge" workflow: present with prompt, dismissable modal with callback(s)
+- hashids
+
+NOW:
+
+- from user profile view, implement "follow" & "chat" buttons
+- zip code support for location
+- city/state support for location
+
+LATER:
+
+- test docker compose, peek at helm chart
+- integrate redis session cache for shared persistence between api workers
+- load balance both app & api
