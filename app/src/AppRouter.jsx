@@ -1,4 +1,10 @@
-import React, { useState, useContext, createContext } from "react";
+import React, {
+  useState,
+  useContext,
+  createContext,
+  useEffect,
+  useRef,
+} from "react";
 import {
   BrowserRouter,
   Route,
@@ -82,7 +88,7 @@ import Logo from "./static/logo.png";
 
 const CONST = {
   API: `http://192.168.1.114:4000/api`,
-  DEBUG: false,
+  DEBUG: true,
 };
 console.warn(`DEBUG MODE ENABLED: ${CONST.DEBUG}`);
 
@@ -743,6 +749,24 @@ const MapPanel = (props) => {
 const AuthContext = createContext();
 //
 
+const useInterval = (callback, delay) => {
+  const savedCallback = useRef();
+
+  useEffect(() => {
+    savedCallback.current = callback;
+  }, [callback]);
+
+  useEffect(() => {
+    function tick() {
+      savedCallback.current();
+    }
+    if (delay !== null) {
+      const id = setInterval(tick, delay);
+      return () => clearInterval(id);
+    }
+  }, [delay]);
+};
+
 const useRequest = (auth) => {
   const { token } = auth;
 
@@ -805,22 +829,28 @@ const Navigation = (props) => {
   const request = useRequest(auth);
 
   const [notifications, setNotifications] = useState();
+
   const navigate = useNavigate();
   const { brand } = props;
 
   const iconSize = 28;
 
   React.useEffect(() => {
-    isAuthed() && gofetch();
+    isAuthed() && poll();
   }, []);
 
-  const gofetch = () => {
+  // useInterval(() => {
+  //   console.debug(`Polling notifications 🍕`);
+  //   poll();
+  // }, 1000 * 3);
+
+  const poll = () => {
     request(`${CONST.API}/notifications/${auth.pk}`, {
-      method: "POST",
+      method: "GET",
     })
       .then((response) => response.json())
       .then((json) => {
-        console.log(json);
+        console.debug(json);
         setNotifications(json);
       })
       .catch((error) => {
@@ -1658,8 +1688,19 @@ const InboxPage = (props) => {
       .catch((error) => console.error(error));
   };
 
-  const acknowledgeNotification = () => {
-    console.log(`ackNot`);
+  const acknowledgeNotification = ({ src_fk, dst_fk }) => {
+    console.log(`acknowledgeNotification:`, src_fk, dst_fk);
+    request(`${CONST.API}/chat/read/${src_fk}/${dst_fk}`, {
+      method: "POST",
+    })
+      .then((response) => response.json())
+      .then((json) => {
+        console.log(json);
+      })
+      .catch((error) => {
+        console.error(error);
+        toast(`Error marking as read`, { type: "error" });
+      });
   };
 
   return (
@@ -1672,7 +1713,7 @@ const InboxPage = (props) => {
             key={uuidv4()}
             ours={ours}
             onClick={() => {
-              // acknowledgeNotification({ src_fk: auth.pk, dst_fk: });
+              acknowledgeNotification({ src_fk: fk, dst_fk: auth.pk });
               navigate(ROUTES.CHAT, {
                 state: { fk: fk },
               });

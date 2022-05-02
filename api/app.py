@@ -23,6 +23,7 @@ LOCATION_RADIUS = 25  # miles
 SRID = 4326
 METERS_IN_MILE = 1609.344
 
+
 import traceback
 import os
 import logging
@@ -32,7 +33,7 @@ import base64
 import hashlib
 import sys
 import datetime
-from pdb import set_trace
+from pdb import set_trace as debug
 import time
 import json
 import random
@@ -45,13 +46,22 @@ import itertools
 from abc import abstractmethod
 
 
+from werkzeug.routing import BaseConverter
 import numpy as np
 from PIL import Image
 import jwt
 from sqlalchemy import and_, func
 from flask_cors import CORS
 from sqlalchemy.orm import relationship
-from flask import Flask, current_app, request, jsonify, session, make_response
+from flask import (
+    Flask,
+    Blueprint,
+    current_app,
+    request,
+    jsonify,
+    session,
+    make_response,
+)
 from flask_restful import reqparse
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
@@ -81,6 +91,28 @@ from vincenty import vincenty
 import shapely
 from shapely.geometry import shape
 
+log = logging.getLogger(__name__)
+
+
+class Config:
+    ROOT = "/api"
+    VERSION = "v1"
+    TESTING = False
+    ENVIRONMENT = "develop"
+    FLASK_HOST = "0.0.0.0"
+    FLASK_PORT = 4000
+    FLASK_DEBUG_ENABLED = False
+    FLASK_USE_RELOADER = False
+    SECRET_KEY = "helloworld"
+    TOKEN_MIN_LENGTH = 8
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_DATABASE_URI = "postgresql://postgres:postgres@localhost:5432"
+
+    def __init__(self, **overrides):
+        for key, value in overrides.items():
+            setattr(self, key, value)
+
+
 # utils
 def timestamp():
     return int(time.time() * 1000)
@@ -103,34 +135,6 @@ def dump_date(dt):
 def dedupe(array):
     # order-preserving deduplication
     return [element for i, element in enumerate(array) if element not in set(array[:i])]
-
-
-log = logging.getLogger(__name__)
-app = Flask(__name__)
-CORS(app)
-# api = Api()
-db = SQLAlchemy()
-ma = Marshmallow()
-
-# fmt: off
-auth_parser = reqparse.RequestParser()
-auth_parser.add_argument("TOKEN", location="headers", dest="token", type=str, default=None)
-auth_parser.add_argument("PK", location="headers", dest="pk", type=int, default=None)
-
-pagination_parser = reqparse.RequestParser()
-pagination_parser.add_argument("page", location="args", type=int, default=PAGINATION_PAGE)
-pagination_parser.add_argument("size", location="args", type=int, default=PAGINATION_SIZE)
-
-location_parser = reqparse.RequestParser()
-location_parser.add_argument("latitude", type=float, default=LOCATION_LATITUDE)
-location_parser.add_argument("longitude", type=float, default=LOCATION_LONGITUDE)
-location_parser.add_argument("radius", type=float, default=LOCATION_RADIUS)
-
-calendar_parser = reqparse.RequestParser()
-calendar_parser.add_argument("date", location="args", type=load_date, default=load_date(dump_date(datetime.datetime.now())))
-calendar_parser.add_argument("days", location="args", type=int, default=7)
-calendar_parser.add_argument("fk", location="args", type=int, required=True)
-# fmt: on
 
 
 class Hashids:
@@ -160,11 +164,79 @@ class Hashids:
 hashids = Hashids()
 
 
+class HashidConverter(BaseConverter):
+    def to_python(self, value):
+        return hashids.decode(value)
+
+    def to_url(self, value):
+        return hashids.encode(value) if value is not None else ""
+
+
+# app = Flask(__name__)
+bp = Blueprint("apiv1", __name__)
+# api = Api()
+db = SQLAlchemy()
+ma = Marshmallow()
+
+
+def app_factory(environment="develop"):
+    print(f"app | environment: {environment}")
+    app = Flask(__name__)
+    config = Config()
+    app.config.from_object(config)
+    # https://github.dev/pallets/flask/blob/a03719b01076a5bfdc2c8f4024eda7b874614bc1/src/flask/app.py#L474
+    # app.url_map.converters["hashid"] = HashidConverter
+    CORS(app)
+    db.init_app(app)
+    ma.init_app(app)
+
+    def handle_error(error):
+        if error.code != 404:
+            print(traceback.format_exc())
+        return Reply.error(error=error.__class__.__qualname__)
+
+    @app.errorhandler(Exception)
+    def errorhandler(error):
+        return handle_error(error)
+
+    @bp.errorhandler(Exception)
+    def errorhandler(error):
+        return handle_error(error)
+
+    url_prefix = os.path.join(app.config["ROOT"], app.config["VERSION"])
+    app.register_blueprint(bp, url_prefix=url_prefix)
+
+    return app
+
+
+# fmt: off
+auth_parser = reqparse.RequestParser()
+auth_parser.add_argument("TOKEN", location="headers", dest="token", type=str, default=None)
+auth_parser.add_argument("PK", location="headers", dest="pk", type=int, default=None)
+
+pagination_parser = reqparse.RequestParser()
+pagination_parser.add_argument("page", location="args", type=int, default=PAGINATION_PAGE)
+pagination_parser.add_argument("size", location="args", type=int, default=PAGINATION_SIZE)
+
+location_parser = reqparse.RequestParser()
+location_parser.add_argument("latitude", type=float, default=LOCATION_LATITUDE)
+location_parser.add_argument("longitude", type=float, default=LOCATION_LONGITUDE)
+location_parser.add_argument("radius", type=float, default=LOCATION_RADIUS)
+
+calendar_parser = reqparse.RequestParser()
+calendar_parser.add_argument("date", location="args", type=load_date, default=load_date(dump_date(datetime.datetime.now())))
+calendar_parser.add_argument("days", location="args", type=int, default=7)
+calendar_parser.add_argument("fk", location="args", type=int, required=True)
+# fmt: on
+
+
 class HashidField(fields.Field):
     def _deserialize(self, value, attr, data, **kwargs):
-        if value is None:
-            return None
-        return hashids.decode(value)
+        # we decode at service layer
+        return value
+        # if value is None:
+        #     return None
+        # return hashids.decode(value)
 
     def _serialize(self, value, attr, obj, **kwargs):
         if value is None:
@@ -176,13 +248,27 @@ def authenticated(*args, **kwargs):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            if session or UNSAFE:
+            # new request or keep-alice
+            if UNSAFE:
+                log.warning(f" * * @auth: running in UNSAFE mode * * ")
+                return f(*args, **kwargs)
+            if session:
+                log.info(f"Connecting existing session")
                 return f(*args, **kwargs)
             return Reply.unauthorized(error="Unauthorized")
 
         return decorated_function
 
     return decorator
+
+
+def require(*args, **kwargs):
+    for arg in args:
+        if not bool(arg):
+            raise Exception("required stuff!")
+    for key, value in kwargs.items():
+        if not bool(value):
+            raise Exception("required stuff!")
 
 
 ### POJO ###
@@ -221,7 +307,7 @@ class Token:
         sub,
         exp=None,
     ):
-        return cls(sub, exp=exp)
+        return cls(hashids.decode(sub), exp=exp)
 
 
 class Reply:
@@ -264,17 +350,14 @@ class Reply:
         return cls.reply(data=data, error=error, status=status, headers=headers)
 
 
-class Config:
-    SECRET_KEY = "helloworld"
-    TOKEN_MIN_LENGTH = 8
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_DATABASE_URI = "postgresql://postgres:postgres@localhost:5432"
-
-
 ### MODELS ###
 class BaseModel(db.Model):
     __abstract__ = True
-    pk = db.Column(db.Integer(), primary_key=True, unique=True)
+    pk = db.Column(
+        db.Integer(),
+        primary_key=True,
+        unique=True,
+    )
     created_at = db.Column(db.BigInteger(), default=timestamp, nullable=False)
     updated_at = db.Column(
         db.BigInteger(), default=None, onupdate=timestamp, nullable=True
@@ -394,12 +477,12 @@ class UserModel(BaseModel):
 ### SCHEMAS ###
 class BaseSchema(ma.SQLAlchemyAutoSchema):
     """
-    missing     used for deserialization (dump)
-    default     used for serialization (load)
+    load_default     used for deserialization (dump)
+    dump_default     used for serialization (load)
     https://github.com/marshmallow-code/marshmallow/issues/588#issuecomment-283544372
     """
 
-    # pk = HashidField(dump_only=True) # this does work
+    # pk = HashidField(dump_only=True)  # this does work
     pk = fields.Int(dump_only=True)
     created_at = fields.Int(dump_only=True)
     updated_at = fields.Int(dump_only=True)
@@ -454,7 +537,7 @@ class ProfileSchema(BaseSchema):
             "mobility",
         )
 
-    fk = fields.Int(required=True, allow_none=False)
+    fk = HashidField(required=True, allow_none=False)
     alias = fields.Str(
         required=False, allow_none=True, validate=validate.Length(max=32)
     )
@@ -463,9 +546,9 @@ class ProfileSchema(BaseSchema):
         required=False, allow_none=True, validate=validate.Range(min=1, max=100)
     )
     handicap = fields.Float(required=False, allow_none=True)
-    drinking = fields.Integer(required=False, allow_none=True, missing=0)
-    mobility = fields.Integer(required=False, allow_none=True, missing=0)
-    weather = fields.Integer(required=False, allow_none=True, missing=0)
+    drinking = fields.Integer(required=False, allow_none=True, load_default=0)
+    mobility = fields.Integer(required=False, allow_none=True, load_default=0)
+    weather = fields.Integer(required=False, allow_none=True, load_default=0)
 
 
 class GeoField(fields.Field):
@@ -493,14 +576,14 @@ class LocationSchema(BaseSchema):
 
     geometry = GeoField(required=True, allow_none=False)
     lable = fields.Str(required=False, allow_none=True)
-    distance = fields.Decimal(required=False, default=None)
+    distance = fields.Decimal(required=False)
 
 
 class ImageSchema(BaseSchema):
     class Meta(BaseSchema.Meta):
         model = ImageModel
 
-    fk = fields.Int(required=True, allow_none=False)
+    fk = HashidField(required=True, allow_none=False)
     img = fields.Str(allow_none=False, required=True)
 
     @post_dump
@@ -517,7 +600,7 @@ class CalendarSchema(BaseSchema):
         model = CalendarModel
         editable = ("time",)
 
-    fk = fields.Int(required=True, allow_none=False)
+    fk = HashidField(required=True, allow_none=False)
 
 
 class UserSchema(BaseSchema):
@@ -566,8 +649,8 @@ class MessageSchema(BaseSchema):
         model = MessageModel
         editable = ("read",)
 
-    src_fk = fields.Int(required=True, allow_none=False)
-    dst_fk = fields.Int(required=True, allow_none=False)
+    src_fk = HashidField(required=True, allow_none=False)
+    dst_fk = HashidField(required=True, allow_none=False)
     body = fields.Str(required=True, allow_none=False)
     read = fields.Bool(required=False, allow_none=False)
 
@@ -595,8 +678,8 @@ class NetworkSchema(BaseSchema):
     class Meta(BaseSchema.Meta):
         model = NetworkModel
 
-    src_fk = fields.Int(required=True, allow_none=False)
-    dst_fk = fields.Int(required=True, allow_none=False)
+    src_fk = HashidField(required=True, allow_none=False)
+    dst_fk = HashidField(required=True, allow_none=False)
     src = fields.Nested(
         UserSchema,
         many=False,
@@ -810,6 +893,8 @@ class MessageManager(BaseManager):
         # [(3, 1), (1, 2)]
         #   [(1, 2), (2, 1)]
         #   [(1, 3), (3, 1)]
+        if fk is None:
+            return []
         records = db.engine.execute(
             f"""
             SELECT t1.src_fk, t1.dst_fk
@@ -1184,15 +1269,15 @@ class QueryManager(BaseManager):
 
 ### SERVICES ###
 # ----------------------------------- #
-@app.errorhandler(Exception)
-def error(e):
-    if e.code != 404:
-        print(traceback.format_exc())
-    return Reply.error(error=e.__class__.__qualname__)
+# @app.errorhandler(Exception)
+# def error(e):
+#     if e.code != 404:
+#         print(traceback.format_exc())
+#     return Reply.error(error=e.__class__.__qualname__)
 
 
 # ----------------------------------- #
-@app.route(ROOT, methods=["GET"])
+@bp.route("/", methods=["GET"])
 def index():
     omit = (
         "HEAD",
@@ -1213,28 +1298,27 @@ def index():
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/auth/register", methods=["POST"])
+@bp.route("/auth/register", methods=["POST"])
 def auth_register():
     user = user_manager.create(request.get_json())
     return issue_token()
 
 
-@app.route(ROOT + "/auth/login", methods=["POST"])
+@bp.route("/auth/login", methods=["POST"])
 def issue_token():
     subject = user_manager.login(request.get_json())
-    if subject is not None:
-        return Reply.success(
-            data=dict(pk=subject.pk, token=auth_manager.issue_token(subject=subject.pk))
-        )
-    return Reply.unauthorized(error="Unauthorized")
+    if not subject:
+        return Reply.unauthorized(error="Unauthorized")
+    pk = UserSchema().dump(subject).get("pk")
+    return Reply.success(data=dict(pk=pk, token=auth_manager.issue_token(subject=pk)))
 
 
-@app.route(ROOT + "/auth/logout", methods=["POST"])
+@bp.route("/auth/logout", methods=["POST"])
 def revoke_token():
     return Reply.success(data=user_manager.logout())
 
 
-@app.route(ROOT + "/auth/validate", methods=["POST"])
+@bp.route("/auth/validate", methods=["POST"])
 def validate_token():
     token = auth_parser.parse_args().get("token")
     if auth_manager.check_token(token):
@@ -1243,31 +1327,31 @@ def validate_token():
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/events", methods=["POST"])
+@bp.route("/events", methods=["POST"])
 @authenticated()
 def create_event():
     return Reply.success(data=event_manager.create(request.get_json()))
 
 
-@app.route(ROOT + "/events/<int:pk>", methods=["GET"])
+@bp.route("/events/<int:pk>", methods=["GET"])
 @authenticated()
 def read_event(pk):
     return Reply.success(data=event_manager.read(pk))
 
 
-@app.route(ROOT + "/events/<int:pk>", methods=["PATCH"])
+@bp.route("/events/<int:pk>", methods=["PATCH"])
 @authenticated()
 def update_event(pk):
     return Reply.success(data=event_manager.update(pk, request.get_json()))
 
 
-@app.route(ROOT + "/events/<int:pk>", methods=["DELETE"])
+@bp.route("/events/<int:pk>", methods=["DELETE"])
 @authenticated()
 def delete_event(pk):
     return Reply.success(data=event_manager.delete(pk))
 
 
-@app.route(ROOT + "/events/query", methods=["POST"])
+@bp.route("/events/query", methods=["POST"])
 @authenticated()
 def query_events():
     pags = pagination_parser.parse_args()
@@ -1275,31 +1359,31 @@ def query_events():
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/users", methods=["POST"])
+@bp.route("/users", methods=["POST"])
 @authenticated()
 def create_user():
     return Reply.success(data=user_manager.create(request.get_json()))
 
 
-@app.route(ROOT + "/users/<int:pk>", methods=["GET"])
+@bp.route("/users/<int:pk>", methods=["GET"])
 @authenticated()
 def read_user(pk):
     return Reply.success(data=user_manager.read(pk))
 
 
-@app.route(ROOT + "/users/<int:pk>", methods=["PATCH"])
+@bp.route("/users/<int:pk>", methods=["PATCH"])
 @authenticated()
 def update_user(pk):
     return Reply.success(data=user_manager.update(pk, request.get_json()))
 
 
-@app.route(ROOT + "/users/<int:pk>", methods=["DELETE"])
+@bp.route("/users/<int:pk>", methods=["DELETE"])
 @authenticated()
 def delete_user(pk):
     return Reply.success(data=user_manager.delete(pk))
 
 
-@app.route(ROOT + "/users/query", methods=["POST"])
+@bp.route("/users/query", methods=["POST"])
 @authenticated()
 def query_users():
     pags = pagination_parser.parse_args()
@@ -1307,56 +1391,56 @@ def query_users():
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/profiles", methods=["POST"])
+@bp.route("/profiles", methods=["POST"])
 @authenticated()
 def create_profile():
     return Reply.success(data=profile_manager.create(request.get_json()))
 
 
-@app.route(ROOT + "/profiles/<int:pk>", methods=["GET"])
+@bp.route("/profiles/<int:pk>", methods=["GET"])
 @authenticated()
 def read_profile(pk):
     return Reply.success(data=profile_manager.read(pk))
 
 
-@app.route(ROOT + "/profiles/<int:pk>", methods=["PATCH"])
+@bp.route("/profiles/<int:pk>", methods=["PATCH"])
 @authenticated()
 def update_profile(pk):
     return Reply.success(data=profile_manager.update(pk, request.get_json()))
 
 
-@app.route(ROOT + "/profiles/<int:pk>", methods=["DELETE"])
+@bp.route("/profiles/<int:pk>", methods=["DELETE"])
 @authenticated()
 def delete_profile(pk):
     return Reply.success(data=profile_manager.delete(pk))
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/locations", methods=["POST"])
+@bp.route("/locations", methods=["POST"])
 @authenticated()
 def create_location():
     return Reply.success(data=location_manager.create(request.get_json()))
 
 
-@app.route(ROOT + "/locations/<int:pk>", methods=["GET"])
+@bp.route("/locations/<int:pk>", methods=["GET"])
 @authenticated()
 def read_location(pk):
     return Reply.success(data=location_manager.read(pk))
 
 
-@app.route(ROOT + "/locations/<int:pk>", methods=["PATCH"])
+@bp.route("/locations/<int:pk>", methods=["PATCH"])
 @authenticated()
 def update_location(pk):
     return Reply.success(data=location_manager.update(pk, request.get_json()))
 
 
-@app.route(ROOT + "/locations/<int:pk>", methods=["DELETE"])
+@bp.route("/locations/<int:pk>", methods=["DELETE"])
 @authenticated()
 def delete_location(pk):
     return Reply.success(data=location_manager.delete(pk))
 
 
-@app.route(ROOT + "/locations/query", methods=["POST"])
+@bp.route("/locations/query", methods=["POST"])
 @authenticated()
 def query_locations():
     pags = pagination_parser.parse_args()
@@ -1365,84 +1449,84 @@ def query_locations():
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/messages", methods=["POST"])
+@bp.route("/messages", methods=["POST"])
 @authenticated()
 def create_message():
     return Reply.success(data=message_manager.create(request.get_json()))
 
 
-@app.route(ROOT + "/messages/<int:pk>", methods=["GET"])
+@bp.route("/messages/<int:pk>", methods=["GET"])
 @authenticated()
 def read_message(pk):
     return Reply.success(data=message_manager.read(pk))
 
 
-@app.route(ROOT + "/messages/<int:pk>", methods=["PATCH"])
+@bp.route("/messages/<int:pk>", methods=["PATCH"])
 @authenticated()
 def update_message(pk):
     return Reply.success(data=message_manager.update(pk, request.get_json()))
 
 
-@app.route(ROOT + "/messages/<int:pk>", methods=["DELETE"])
+@bp.route("/messages/<int:pk>", methods=["DELETE"])
 @authenticated()
 def delete_message(pk):
     return Reply.success(data=message_manager.delete(pk))
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/conversations/<int:pk>", methods=["GET"])
+@bp.route("/conversations/<int:pk>", methods=["GET"])
 @authenticated()
 def get_conversations(pk):
     pags = pagination_parser.parse_args()
     return Reply.success(data=message_manager.get_conversations(pk, **pags))
 
 
-@app.route(ROOT + "/conversations/<int:src_fk>/<int:dst_fk>", methods=["GET"])
+@bp.route("/conversations/<int:src_fk>/<int:dst_fk>", methods=["GET"])
 @authenticated()
 def get_conversation(src_fk, dst_fk):
     pags = pagination_parser.parse_args()
     return Reply.success(data=message_manager.get_conversation(src_fk, dst_fk, **pags))
 
 
-@app.route(ROOT + "/chat/read/<int:src_fk>/<int:dst_fk>", methods=["POST"])
+@bp.route("/chat/read/<int:src_fk>/<int:dst_fk>", methods=["POST"])
 @authenticated()
 def mark_read(src_fk, dst_fk):
     return Reply.success(data=message_manager.mark_read(src_fk, dst_fk))
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/notifications/<int:pk>", methods=["POST"])
+@bp.route("/notifications/<int:pk>", methods=["GET"])
 @authenticated()
 def get_notifications(pk):
-    return Reply.success(message_manager.get_notifications(pk))
+    return Reply.success(data=message_manager.get_notifications(pk))
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/images", methods=["POST"])
+@bp.route("/images", methods=["POST"])
 @authenticated()
 def create_image():
     return Reply.success(data=image_manager.create(request.get_json()))
 
 
-@app.route(ROOT + "/images/<int:pk>", methods=["GET"])
+@bp.route("/images/<int:pk>", methods=["GET"])
 @authenticated()
 def read_image(pk):
     return Reply.success(data=image_manager.read(pk=pk))
 
 
-@app.route(ROOT + "/images/<int:pk>", methods=["PATCH"])
+@bp.route("/images/<int:pk>", methods=["PATCH"])
 @authenticated()
 def update_image(pk):
     return Reply.success(data=image_manager.update(pk, request.get_json()))
 
 
-@app.route(ROOT + "/images/<int:pk>", methods=["DELETE"])
+@bp.route("/images/<int:pk>", methods=["DELETE"])
 @authenticated()
 def delete_image(pk):
     return Reply.success(data=image_manager.delete(pk))
 
 
-@app.route(ROOT + "/images/img/<int:pk>", methods=["GET"])
+@bp.route("/images/img/<int:pk>", methods=["GET"])
 def serve_image(pk):
     return Reply.plain(
         data=base64.b64decode(image_manager.read(pk=pk).get("img")), dtype="image/png"
@@ -1450,45 +1534,45 @@ def serve_image(pk):
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/calendar", methods=["POST"])
+@bp.route("/calendar", methods=["POST"])
 @authenticated()
 def create_calendar():
     return Reply.success(data=calendar_manager.create(request.get_json()))
 
 
-@app.route(ROOT + "/calendar/<int:pk>", methods=["GET"])
+@bp.route("/calendar/<int:pk>", methods=["GET"])
 @authenticated()
 def read_calendar(pk):
     return Reply.success(data=calendar_manager.read(pk))
 
 
-@app.route(ROOT + "/calendar/<int:pk>", methods=["PATCH"])
+@bp.route("/calendar/<int:pk>", methods=["PATCH"])
 @authenticated()
 def update_calendar(pk):
     return Reply.success(data=calendar_manager.update(pk, request.get_json()))
 
 
-@app.route(ROOT + "/calendar/<int:pk>", methods=["DELETE"])
+@bp.route("/calendar/<int:pk>", methods=["DELETE"])
 @authenticated()
 def delete_calendar(pk):
     return Reply.success(data=calendar_manager.delete(pk))
 
 
-@app.route(ROOT + "/calendar/query", methods=["POST"])
+@bp.route("/calendar/query", methods=["POST"])
 @authenticated()
 def query_calendar():
     kwargs = calendar_parser.parse_args()
     return Reply.success(data=calendar_manager.query(**kwargs))
 
 
-@app.route(ROOT + "/calendar/availability", methods=["POST"])
+@bp.route("/calendar/availability", methods=["POST"])
 @authenticated()
 def set_availability():
     return Reply.success(data=calendar_manager.set_availability(request.get_json()))
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/search/query", methods=["POST"])
+@bp.route("/search/query", methods=["POST"])
 @authenticated()
 def search_query():
     pags = pagination_parser.parse_args()
@@ -1496,57 +1580,60 @@ def search_query():
 
 
 # ----------------------------------- #
-@app.route(ROOT + "/network", methods=["POST"])
+@bp.route("/network", methods=["POST"])
 @authenticated()
 def create_network():
     # TODO: fail if exists
     return Reply.success(data=network_manager.create(request.get_json()))
 
 
-@app.route(ROOT + "/network/<int:pk>", methods=["GET"])
+@bp.route("/network/<int:pk>", methods=["GET"])
 @authenticated()
 def read_network(pk):
     return Reply.success(data=network_manager.read(pk))
 
 
-@app.route(ROOT + "/network/<int:pk>", methods=["PATCH"])
+@bp.route("/network/<int:pk>", methods=["PATCH"])
 @authenticated()
 def update_network(pk):
     return Reply.success(data=network_manager.update(pk, request.get_json()))
 
 
-@app.route(ROOT + "/network/<int:pk>", methods=["DELETE"])
+@bp.route("/network/<int:pk>", methods=["DELETE"])
 @authenticated()
 def delete_network(pk):
     return Reply.success(data=network_manager.delete(pk))
 
 
-@app.route(ROOT + "/network/follow", methods=["POST"])
+@bp.route("/network/follow", methods=["POST"])
 @authenticated()
 def follow():
     return Reply.success(data=network_manager.follow(**request.get_json()))
 
 
-@app.route(ROOT + "/network/unfollow", methods=["POST"])
+@bp.route("/network/unfollow", methods=["POST"])
 @authenticated()
 def unfollow():
     return Reply.success(data=network_manager.unfollow(**request.get_json()))
 
 
-@app.route(ROOT + "/network/followers/<int:pk>", methods=["POST"])
+@bp.route("/network/followers/<int:pk>", methods=["POST"])
 @authenticated()
 def network_followers(pk):
     pags = pagination_parser.parse_args()
     return Reply.success(data=network_manager.get_followers(pk, **pags))
 
 
-@app.route(ROOT + "/network/following/<int:pk>", methods=["POST"])
+@bp.route("/network/following/<int:pk>", methods=["POST"])
 @authenticated()
 def network_following(pk):
     return Reply.success(data=network_manager.get_following(pk))
 
 
 # ----------------------------------- #
+@bp.route("/hash/<int:pk>")
+def hash_route(pk):
+    return Reply.success(data=dict(pk=pk, type=str(type(pk))))
 
 
 # ----------------------------------- #
@@ -1584,11 +1671,7 @@ if __name__ == "__main__":
             "disable_existing_loggers": False,
         }
     )
-    config = Config()
-    app.config.from_object(config)
-    # api.init_app(app)
-    db.init_app(app)
-    ma.init_app(app)
+    app = app_factory(environment="develop")
 
     hashids.init_app(app)
     auth_manager = AuthManager()
@@ -1603,7 +1686,7 @@ if __name__ == "__main__":
     query_manager = QueryManager()
 
     RESET = True
-    N = 20
+    N = 5
 
     with app.app_context() as ctx:
         if RESET:
@@ -1767,9 +1850,15 @@ if __name__ == "__main__":
         toc = datetime.datetime.now()
         print(f"Startup Time: {toc - tic}")
 
+    log.info(f"Hashid (1): {hashids.encode(1)}")
     # interactive mode
     if bool(getattr(sys, "ps1", sys.flags.interactive)):
         log.warning("🟢 Interactive Mode")
     else:
         log.warning("🔴 Non-interactive Mode")
-        app.run(host="0.0.0.0", port=4000, debug=True, use_reloader=False)
+        app.run(
+            host=app.config["FLASK_HOST"],
+            port=app.config["FLASK_PORT"],
+            debug=app.config["FLASK_DEBUG_ENABLED"],
+            use_reloader=app.config["FLASK_USE_RELOADER"],
+        )
