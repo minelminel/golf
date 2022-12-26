@@ -7,6 +7,7 @@ marshmallow-sqlalchemy
 psycopg2-binary
 flask-CORS
 marshmallow_enum
+flask-redis
 
 numpy
 Pillow

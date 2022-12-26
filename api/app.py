@@ -23,7 +23,8 @@ LOCATION_RADIUS = 25  # miles
 SRID = 4326
 METERS_IN_MILE = 1609.344
 
-
+import uuid
+from types import SimpleNamespace
 import traceback
 import os
 import logging
@@ -44,8 +45,9 @@ from types import SimpleNamespace
 from io import BytesIO
 import itertools
 from abc import abstractmethod
+from functools import wraps
 
-
+from flask_redis import FlaskRedis
 from werkzeug.routing import BaseConverter
 import numpy as np
 from PIL import Image
@@ -75,6 +77,7 @@ from marshmallow import (
     post_load,
     post_dump,
     pre_load,
+    validates_schema,
 )
 from hashids import Hashids as _Hashids
 import geojson
@@ -93,6 +96,24 @@ from shapely.geometry import shape
 
 log = logging.getLogger(__name__)
 
+CREDS1 = SimpleNamespace(
+    KEY=1,
+    email="hello@world.com",
+    username="hello",
+    password="notverygood",
+)
+
+CREDS2 = SimpleNamespace(
+    KEY=2,
+    email="ipsum@lorem.com",
+    username="world",
+    password="badchoice",
+)
+
+
+class UnauthorizedRequest(Exception):
+    """401: Unauthorized"""
+
 
 class Config:
     ROOT = "/api"
@@ -107,6 +128,7 @@ class Config:
     TOKEN_MIN_LENGTH = 8
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_DATABASE_URI = "postgresql://postgres:postgres@localhost:5432"
+    REDIS_URL = "redis://localhost:6379/0"
 
     def __init__(self, **overrides):
         for key, value in overrides.items():
@@ -116,6 +138,10 @@ class Config:
 # utils
 def timestamp():
     return int(time.time() * 1000)
+
+
+def uuidstamp():
+    return str(uuid.uuid4())
 
 
 def checksum(data):
@@ -172,28 +198,64 @@ class HashidConverter(BaseConverter):
         return hashids.encode(value) if value is not None else ""
 
 
-# app = Flask(__name__)
 bp = Blueprint("apiv1", __name__)
 # api = Api()
 db = SQLAlchemy()
 ma = Marshmallow()
+redis = FlaskRedis()
 
 
-def app_factory(environment="develop"):
+def app_factory(environment="develop", **overrides):
     print(f"app | environment: {environment}")
     app = Flask(__name__)
-    config = Config()
+    config = Config(environment=environment, **overrides)
     app.config.from_object(config)
+    dictConfig(
+        {
+            "version": 1,
+            "formatters": {
+                "default": {
+                    "format": "%(asctime)s - %(levelname)s - %(message)s",
+                    "datefmt": "%Y-%m-%d %H:%M:%S",
+                }
+            },
+            "handlers": {
+                "console": {
+                    "level": "INFO",
+                    "class": "logging.StreamHandler",
+                    "formatter": "default",
+                    "stream": "ext://sys.stdout",
+                },
+                "file": {
+                    "level": "DEBUG",
+                    "class": "logging.handlers.RotatingFileHandler",
+                    "formatter": "default",
+                    "filename": "/dev/null",
+                    "maxBytes": 1024,
+                    "backupCount": 3,
+                },
+            },
+            "loggers": {"": {"level": "DEBUG", "handlers": ["console", "file"]}},
+            "disable_existing_loggers": False,
+        }
+    )
     # https://github.dev/pallets/flask/blob/a03719b01076a5bfdc2c8f4024eda7b874614bc1/src/flask/app.py#L474
     # app.url_map.converters["hashid"] = HashidConverter
     CORS(app)
     db.init_app(app)
     ma.init_app(app)
+    redis.init_app(app)
+    hashids.init_app(app)
+    # managers.init_app(...)
+    with app.app_context() as ctx:
+        db.create_all()
 
     def handle_error(error):
-        if error.code != 404:
-            print(traceback.format_exc())
-        return Reply.error(error=error.__class__.__qualname__)
+        # if error.code != 404:
+        #     print(traceback.format_exc())
+        return Reply.error(
+            error="{}:{}".format(error.__class__.__qualname__, str(error))
+        )
 
     @app.errorhandler(Exception)
     def errorhandler(error):
@@ -207,6 +269,12 @@ def app_factory(environment="develop"):
     app.register_blueprint(bp, url_prefix=url_prefix)
 
     return app
+
+
+def RBAC(identity, qualifier):
+    if identity:
+        if identity.key != qualifier:
+            raise UnauthorizedRequest("Invalid Scope")
 
 
 # fmt: off
@@ -288,26 +356,22 @@ class Token:
     You can see a full list of reserved claims at the [IANA JSON Web Token Claims Registry](https://www.iana.org/assignments/jwt/jwt.xhtml#claims)
     """
 
-    def __init__(self, sub: int, exp=None, ttl: int = 60 * 60 * 1):
-        self.sub = sub
+    def __init__(self, key: int, exp=None, ttl: int = 60 * 60 * 1):
+        self.key = key
         self.exp = exp if exp is not None else timestamp() + (ttl * 1000)
 
     @property
     def valid(self):
         if self.exp is None:
             return False
-        return timestamp() <= self.exp
+        return timestamp() < self.exp
 
     def serialize(self):
-        return dict(sub=self.sub, exp=self.exp)
+        return dict(key=self.key, exp=self.exp)
 
     @classmethod
-    def deserialize(
-        cls,
-        sub,
-        exp=None,
-    ):
-        return cls(hashids.decode(sub), exp=exp)
+    def deserialize(cls, key=None, exp=None, **kwargs):
+        return cls(key=key, exp=exp)
 
 
 class Reply:
@@ -353,7 +417,7 @@ class Reply:
 ### MODELS ###
 class BaseModel(db.Model):
     __abstract__ = True
-    pk = db.Column(
+    key = db.Column(
         db.Integer(),
         primary_key=True,
         unique=True,
@@ -364,93 +428,39 @@ class BaseModel(db.Model):
     )
 
 
-class EventModel(BaseModel):
-    __tablename__ = "events"
-    stale = db.Column(db.Boolean(), unique=False, default=False)
-    action = db.Column(db.String(), unique=False, nullable=False)
-    source = db.Column(db.String(), unique=False, nullable=True)
-    payload = db.Column(db.String(), unique=False, nullable=True)
-
-
 class NetworkModel(BaseModel):
-    __tablename__ = "networks"
-    src_fk = db.Column(
-        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
+    __tablename__ = "network"
+    source = db.Column(
+        db.Integer(), db.ForeignKey("user.key"), nullable=False, unique=False
     )
-    dst_fk = db.Column(
-        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
+    target = db.Column(
+        db.Integer(), db.ForeignKey("user.key"), nullable=False, unique=False
     )
-    src = relationship("UserModel", foreign_keys=[src_fk], uselist=False, lazy="select")
-    dst = relationship("UserModel", foreign_keys=[dst_fk], uselist=False, lazy="select")
-
-
-class ProfileModel(BaseModel):
-    __tablename__ = "profiles"
-    alias = db.Column(db.String(), nullable=True, unique=False)
-    bio = db.Column(db.String(), nullable=True, unique=False)
-    age = db.Column(db.Integer(), nullable=True, unique=False)
-    handicap = db.Column(db.Float(), nullable=True, unique=False)
-    drinking = db.Column(db.Integer(), nullable=True, unique=False)
-    mobility = db.Column(db.Integer(), nullable=True, unique=False)
-    weather = db.Column(db.Integer(), nullable=True, unique=False)
-
-    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
-    user = relationship("UserModel", back_populates="profile")
-
-
-class LocationModel(BaseModel):
-    __tablename__ = "locations"
-    geometry = db.Column(
-        Geography(geometry_type="POINT", srid=SRID), nullable=False, unique=False
-    )
-    label = db.Column(db.String(), nullable=True, unique=False)
-    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
-    user = relationship("UserModel", back_populates="location")
-
-
-class ImageModel(BaseModel):
-    __tablename__ = "images"
-    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
-    img = db.Column(db.String(), nullable=False, unique=False)
-
-    user = relationship("UserModel", back_populates="image")
 
 
 class MessageModel(BaseModel):
     __tablename__ = "messages"
     body = db.Column(db.String(), nullable=False, unique=False)
-    read = db.Column(db.Boolean(), nullable=False, unique=False, default=False)
-    src_fk = db.Column(
-        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
+    source = db.Column(
+        db.Integer(), db.ForeignKey("user.key"), nullable=False, unique=False
     )
-    dst_fk = db.Column(
-        db.Integer(), db.ForeignKey("users.pk"), nullable=False, unique=False
+    target = db.Column(
+        db.Integer(), db.ForeignKey("user.key"), nullable=False, unique=False
     )
 
-    src = relationship("UserModel", foreign_keys=[src_fk], uselist=False, lazy="select")
-    dst = relationship("UserModel", foreign_keys=[dst_fk], uselist=False, lazy="select")
 
-
-class CalendarModel(BaseModel):
-    __tablename__ = "calenders"
-    date = db.Column(db.Date(), nullable=False, unique=False)
-    time = db.Column(db.Integer(), nullable=False, unique=False)  # enum[0:3]
-
-    fk = db.Column(db.Integer(), db.ForeignKey("users.pk"), nullable=False)
-    user = relationship("UserModel", back_populates="calendar")
-
-
-class UserModel(BaseModel):
-    __tablename__ = "users"
+class AuthModel(BaseModel):
+    __tablename__ = "auth"
+    renewed_at = db.Column(db.BigInteger(), unique=False, nullable=True)
     verified = db.Column(db.Boolean(), unique=False, default=False)
     email = db.Column(db.String(), unique=True, nullable=False)
     username = db.Column(db.String(), unique=True, nullable=False)
     password = db.Column(db.String(), unique=False, nullable=False)
 
-    profile = relationship("ProfileModel", uselist=False, back_populates="user")
-    location = relationship("LocationModel", uselist=False, back_populates="user")
-    calendar = relationship("CalendarModel", back_populates="user")
-    image = relationship("ImageModel", uselist=False, back_populates="user")
+    # profile = relationship("ProfileModel", uselist=False, back_populates="user")
+    # location = relationship("LocationModel", uselist=False, back_populates="user")
+    # calendar = relationship("CalendarModel", back_populates="user")
+    # image = relationship("ImageModel", uselist=False, back_populates="user")
 
     # following = relationship("NetworkModel", back_populates="src")
     # followers = relationship("NetworkModel", back_populates="dst")
@@ -460,18 +470,46 @@ class UserModel(BaseModel):
     # )
     # dst_messages = relationship("MessageModel", back_populates="dst")
 
-    def hash_password(self, password):
-        self.password = password_context.encrypt(password)
+    def hash_password(self):
+        self.password = password_context.encrypt(self.password)
 
     def verify_password(self, password):
         return password_context.verify(password, self.password)
 
     def generate_auth_token(self, ttl=600):
-        pass
+        return dict()
 
     @staticmethod
     def validate_auth_token(token):
-        pass
+        return True
+
+
+class UserModel(BaseModel):
+    __tablename__ = "user"
+    # TODO: FK to auth key
+    # TODO: username backref
+    auth_ref = relationship(
+        "AuthModel", foreign_keys=[BaseModel.key], uselist=False, lazy="select"
+    )
+    name = db.Column(db.String(), unique=False, nullable=True)
+    bio = db.Column(db.String(), unique=False, nullable=True)
+    image = db.Column(db.String(), unique=False, nullable=True)
+    location = db.Column(db.String(), unique=False, nullable=True)
+    handicap_label = db.Column(db.String(), unique=False, nullable=True)
+    handicap_value = db.Column(db.String(), unique=False, nullable=True)
+    prefers_drinking = db.Column(db.String(), unique=False, nullable=True)
+    prefers_gambling = db.Column(db.String(), unique=False, nullable=True)
+    prefers_mobility = db.Column(db.String(), unique=False, nullable=True)
+    prefers_weather = db.Column(db.String(), unique=False, nullable=True)
+
+
+class CalendarModel(BaseModel):
+    __tablename__ = "calendar"
+    # TODO: username backref
+    identity = db.Column(db.Integer(), nullable=False, unique=False)
+    date = db.Column(db.Date(), nullable=False, unique=False)
+    slot = db.Column(db.Integer(), nullable=False, unique=False)  # Slot enum
+    available = db.Column(db.Boolean(), nullable=False, unique=False)
 
 
 ### SCHEMAS ###
@@ -514,98 +552,9 @@ class BaseSchema(ma.SQLAlchemyAutoSchema):
         return data
 
 
-class EventSchema(BaseSchema):
+class AuthSchema(BaseSchema):
     class Meta(BaseSchema.Meta):
-        model = EventModel
-        editable = ("stale",)
-
-    stale = fields.Bool(dump_only=True)
-    action = fields.Str(allow_none=False)
-    source = fields.Str(allow_none=True)
-    payload = fields.Str(allow_none=True)
-
-
-class ProfileSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = ProfileModel
-        editable = (
-            "alias",
-            "bio",
-            "age",
-            "handicap",
-            "drinking",
-            "mobility",
-        )
-
-    fk = HashidField(required=True, allow_none=False)
-    alias = fields.Str(
-        required=False, allow_none=True, validate=validate.Length(max=32)
-    )
-    bio = fields.Str(required=False, allow_none=True, validate=validate.Length(max=250))
-    age = fields.Int(
-        required=False, allow_none=True, validate=validate.Range(min=1, max=100)
-    )
-    handicap = fields.Float(required=False, allow_none=True)
-    drinking = fields.Integer(required=False, allow_none=True, load_default=0)
-    mobility = fields.Integer(required=False, allow_none=True, load_default=0)
-    weather = fields.Integer(required=False, allow_none=True, load_default=0)
-
-
-class GeoField(fields.Field):
-    def _serialize(self, value, attr, obj, **kwargs):
-        return json.loads(geojson.dumps(shapely.wkb.loads(str(value), True)))
-
-    def _deserialize(self, value, attr, data, **kwargs):
-        # FIXME
-        return str(shape(value))
-
-
-class GeoConverter(ModelConverter):
-    SQLA_TYPE_MAPPING = ModelConverter.SQLA_TYPE_MAPPING.copy()
-    SQLA_TYPE_MAPPING.update({Geography: GeoField})
-
-
-class LocationSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = LocationModel
-        model_coverter = GeoConverter
-        editable = (
-            "geometry",
-            "label",
-        )
-
-    geometry = GeoField(required=True, allow_none=False)
-    lable = fields.Str(required=False, allow_none=True)
-    distance = fields.Decimal(required=False)
-
-
-class ImageSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = ImageModel
-
-    fk = HashidField(required=True, allow_none=False)
-    img = fields.Str(allow_none=False, required=True)
-
-    @post_dump
-    def make_href(self, data, **kwargs):
-        pk = data.get("pk")
-        if pk is not None:
-            href = f"{LOCALHOST}/images/img/{pk}"
-            data.update(href=href)
-        return data
-
-
-class CalendarSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = CalendarModel
-        editable = ("time",)
-
-    fk = HashidField(required=True, allow_none=False)
-
-
-class UserSchema(BaseSchema):
-    class Meta(BaseSchema.Meta):
-        model = UserModel
+        model = AuthModel
         editable = (
             "username",
             "email",
@@ -627,10 +576,10 @@ class UserSchema(BaseSchema):
         allow_none=False,
         validate=validate.Length(max=128),
     )
-    profile = fields.Nested(ProfileSchema, many=False)
-    location = fields.Nested(LocationSchema, many=False)
-    calendar = fields.Nested(CalendarSchema, many=True)
-    image = fields.Nested(ImageSchema, many=False)
+    # profile = fields.Nested(ProfileSchema, many=False)
+    # location = fields.Nested(LocationSchema, many=False)
+    # calendar = fields.Nested(CalendarSchema, many=True)
+    # image = fields.Nested(ImageSchema, many=False)
     # network = fields.Nested(NetworkSchema, many=True)
 
     @validates("username")
@@ -643,57 +592,86 @@ class UserSchema(BaseSchema):
                 f"Username contains non-allowable characters: {set(data).difference(ALLOWABLE_CHARACTERS)}"
             )
 
+    @validates("email")
+    def validate_email(self, data, **kwargs):
+        return True
+
+    @validates("password")
+    def validate_password(self, data, **kwargs):
+        return True
+
+
+class UserSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = UserModel
+        editable = (
+            "name",
+            "bio",
+            "image",
+            "location",
+            "handicap_label",
+            "handicap_value",
+            "prefers_drinking",
+            "prefers_gambling",
+            "prefers_mobility",
+            "prefers_weather",
+        )
+        name = fields.Str(required=False, allow_none=True)
+        bio = fields.Str(required=False, allow_none=True)
+        image = fields.Str(required=False, allow_none=True)
+        location = fields.Str(required=False, allow_none=True)
+        handicap_label = fields.Str(required=False, allow_none=True)
+        handicap_value = fields.Str(required=False, allow_none=True)
+        prefers_drinking = fields.Str(required=False, allow_none=True)
+        prefers_gambling = fields.Str(required=False, allow_none=True)
+        prefers_mobility = fields.Str(required=False, allow_none=True)
+        prefers_weather = fields.Str(required=False, allow_none=True)
+
 
 class MessageSchema(BaseSchema):
     class Meta(BaseSchema.Meta):
         model = MessageModel
-        editable = ("read",)
 
-    src_fk = HashidField(required=True, allow_none=False)
-    dst_fk = HashidField(required=True, allow_none=False)
+    source = fields.Int(required=True, allow_none=False)
+    target = fields.Int(required=True, allow_none=False)
     body = fields.Str(required=True, allow_none=False)
-    read = fields.Bool(required=False, allow_none=False)
 
-    src = fields.Nested(
-        UserSchema,
-        exclude=(
-            "calendar",
-            "location",
-            "profile",
-        ),
-        many=False,
-    )
-    dst = fields.Nested(
-        UserSchema,
-        exclude=(
-            "calendar",
-            "location",
-            "profile",
-        ),
-        many=False,
-    )
+    @validates_schema
+    def mututally_exclusive_parties(self, data, **kwargs):
+        if data.get("source") == data.get("target"):
+            raise ValidationError("Message source and target cannot be the same")
+        return True
 
 
 class NetworkSchema(BaseSchema):
     class Meta(BaseSchema.Meta):
         model = NetworkModel
 
-    src_fk = HashidField(required=True, allow_none=False)
-    dst_fk = HashidField(required=True, allow_none=False)
-    src = fields.Nested(
+    source = fields.Int(required=True, allow_none=False)
+    target = fields.Int(required=True, allow_none=False)
+    source_user = fields.Nested(
         UserSchema,
         many=False,
     )
-    dst = fields.Nested(
+    target_user = fields.Nested(
         UserSchema,
         many=False,
     )
+
+
+class CalendarSchema(BaseSchema):
+    class Meta(BaseSchema.Meta):
+        model = CalendarModel
+
+    key = fields.Int(required=True, allow_none=False)
+    date = fields.Date(required=True, allow_none=False)
+    slot = fields.Int(required=True, allow_none=False)
+    available = fields.Bool(required=True, allow_none=False)
 
 
 ### MANAGERS ###
 class BaseManager:
-    def __init__(self, name="Base", model=None, schema=None):
-        self.name = name
+    def __init__(self, model=None, schema=None):
         self.model = model
         self.schema = schema
         log.info(f"Created: {self}")
@@ -708,16 +686,18 @@ class BaseManager:
     def lookup(self, **kwargs):
         return db.session.query(self.model).filter_by(**kwargs).first()
 
-    def create(self, data):
-        log.debug(f"Create: {data}")
-        obj = self.schema().load(data)
-        db.session.add(obj)
+    def create(self, data, key=None):
+        log.debug(f"Create: {data} (internal: {bool(key)})")
+        identity = self.schema().load(data)
+        if key is not None:
+            identity.key = key
+        db.session.add(identity)
         db.session.commit()
-        return self.schema().dump(obj)
+        return self.schema().dump(identity)
 
-    def read(self, pk, exclude=None, only=None):
-        log.debug(f"Read: {pk}")
-        obj = self.lookup(pk=pk)
+    def read(self, key, exclude=None, only=None):
+        log.debug(f"Read: {key}")
+        obj = self.lookup(key=key)
         if not obj:
             return None
         return self.schema(
@@ -727,20 +707,26 @@ class BaseManager:
             }
         ).dump(obj)
 
-    def update(self, pk, patches):
-        log.debug(f"Update: {pk}, {patches}")
-        obj = self.lookup(pk=pk)
-        [
-            setattr(obj, key, value)
-            for key, value in patches.items()
-            if key in self.schema.Meta.editable
-        ]
-        db.session.commit()
+    def update(self, key, patches):
+        log.debug(f"Update: {key}, {patches}")
+        obj = self.lookup(key=key)
+        wq = False
+        for k, v in patches.items():
+            if k not in self.schema.Meta.editable:
+                log.debug(f"Skipping non-editable field update: {k}")
+                continue
+            log.debug(f"Rewriting field: {k}")
+            par = self.schema(partial=True).load({k: v})
+            setattr(obj, k, getattr(par, k))
+            wq = True
+        if wq:
+            log.debug("Writing changes")
+            db.session.commit()
         return self.schema().dump(obj)
 
-    def delete(self, pk):
-        log.debug(f"Delete: {pk}")
-        obj = self.lookup(pk=pk)
+    def delete(self, key):
+        log.debug(f"Delete: {key}")
+        obj = self.lookup(key=key)
         db.session.delete(obj)
         db.session.commit()
         return True
@@ -765,223 +751,188 @@ class BaseManager:
 
 
 class AuthManager(BaseManager):
-    def parse_token(self):
-        return auth_parser.parse_args().get("token")
+    def __init__(self, model=AuthModel, schema=AuthSchema):
+        super().__init__(model=model, schema=schema)
 
-    def issue_token(self, subject):
-        token = Token(sub=subject)
+    def register(self, data, key=None):
+        log.info(f"Creating new identity")
+        identity = self.schema().load(data)
+        if key is not None:
+            identity.key = key
+        identity.hash_password()
+        db.session.add(identity)
+        db.session.commit()
+        log.info(f"Successfully registered identity")
+        self.on_register(identity)
+        return self.login(data)
+
+    def login(self, payload):
+        log.info(f"Logging in attempt")
+        # allow either email or username from provider
+        qualifier = (
+            "username"
+            if "username" in payload
+            else "email"
+            if "email" in payload
+            else None
+        )
+        log.info(f"Using identity qualifier: {qualifier}")
+        provider = AuthSchema(
+            only=(
+                qualifier,
+                "password",
+            )
+        ).load(payload)
+        identity = (
+            db.session.query(AuthModel)
+            .filter_by(**{qualifier: getattr(provider, qualifier)})
+            .first()
+        )
+        if not identity:
+            log.error(f"No identity registered")
+            raise UnauthorizedRequest("Invalid Identity")
+        if not identity.verify_password(provider.password):
+            log.error(f"Invalid credentials provided")
+            raise UnauthorizedRequest("Invalid Credentials")
+        return self.renew(identity)
+
+    def logout(self, identity):
+        log.info(f"Logging out identity")
+        return True
+
+    def renew(self, identity):
+        log.info(f"Renewing token for identity")
+        identity.renewed_at = timestamp()
+        db.session.commit()
+        key = identity.key
+        encoded = self.issue_token(key)
+        return dict(key=key, token=encoded)
+
+    # utils
+    def issue_token(self, key):
+        token = Token(key=key)
         encoded = jwt.encode(token.serialize(), "mysecret", algorithm="HS256")
         return encoded
 
-    def check_token(self, encoded):
+    def parse_token(self, request):
+        encoded = auth_parser.parse_args(request).get("token")
         if not encoded:
-            return False
+            log.error(f"No encoded token in request")
+            return
         try:
             decoded = jwt.decode(encoded, "mysecret", algorithms=["HS256"])
-        except jwt.exceptions.InvalidSignatureError:
-            return False
-        except jwt.exceptions.DecodeError:
-            return False
+        except jwt.exceptions.InvalidSignatureError as error:
+            log.error(error)
+            return
+        except jwt.exceptions.DecodeError as error:
+            log.error(error)
+            return
         except Exception as exc:
-            print(f"Unhandled authentication error: {exc}")
-            return False
-        token = Token(**decoded)
-        return token.valid
+            log.error(f"Unhandled authentication error: {exc}")
+            return
+        token = Token.deserialize(**decoded)
+        return token
 
+    # decorator
+    def protect(self, f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            token = self.parse_token(request)
+            if not token:
+                return Reply.unauthorized(error="Invalid Token")
+            if not token.valid:
+                return Reply.unauthorized(error="Expired Token")
+            identity = self.lookup(key=token.key)
+            return f(identity, *args, **kwargs)
 
-class EventManager(BaseManager):
-    def __init__(self, model=EventModel, schema=EventSchema):
-        super().__init__(model=model, schema=schema)
+        return wrapped
 
-    def query(self, params, page, size):
-        q = (
-            db.session.query(EventModel)
-            .filter_by(**params)
-            .order_by(EventModel.created_at.desc())
-        )
-        total = q.count()
-        pages = total // size
-        content = q.limit(size).offset(page * size)
-        pags = {
-            "content": EventSchema(many=True).dump(content),
-            "metadata": {
-                "page": page,
-                "size": size,
-                "pages": pages,
-                "total": total,
-            },
-        }
-        return pags
-
-
-class ProfileManager(BaseManager):
-    def __init__(self, model=ProfileModel, schema=ProfileSchema):
-        super().__init__(model=model, schema=schema)
-
-    def query(self, page=PAGINATION_PAGE, size=PAGINATION_SIZE, **kwargs):
-        alias = kwargs.get("alias")
-
-        q = db.session.query(ProfileModel).filter(
-            ProfileModel.alias.like("%{}%".format(alias))
-        )
-        total = q.count()
-        pages = total // size
-        profiles = q.limit(size).offset(page * size)
-        content = ProfileSchema(many=True).dump(profiles)
-        pags = {
-            "content": content,
-            "metadata": {
-                "page": page,
-                "size": size,
-                "pages": pages,
-                "total": total,
-                "checksum": checksum(content),
-            },
-        }
-        return pags
-
-
-class LocationManager(BaseManager):
-    def __init__(self, model=LocationModel, schema=LocationSchema):
-        super().__init__(model=model, schema=schema)
-
-    def query(self, latitude, longitude, radius, page, size):
-        # radius is in miles, convert to meters for query
-        meters = radius * METERS_IN_MILE
-        p = WKTElement("POINT({0} {1})".format(latitude, longitude), srid=SRID)
-        # TODO: order by distance, closest first
-        q = db.session.query(LocationModel).filter(
-            ST_DWithin(LocationModel.geometry, p, meters)
-        )
-        total = q.count()
-        pages = total // size
-        locations = q.limit(size).offset(page * size)
-        content = LocationSchema(many=True).dump(locations)
-        for location in content:
-            lon, lat = location["location"]["coordinates"]
-            distance = vincenty((lat, lon), (latitude, longitude)) / METERS_IN_MILE
-            location.update(distance=distance)
-        pags = {
-            "content": content,
-            "metadata": {
-                "page": page,
-                "size": size,
-                "pages": pages,
-                "total": total,
-                "checksum": checksum(content),
-            },
-            "query": {
-                "latitude": latitude,
-                "longitude": longitude,
-                "radius": radius,
-            },
-        }
-        return pags
-
-
-class ImageManager(BaseManager):
-    def __init__(self, model=ImageModel, schema=ImageSchema):
-        super().__init__(model=model, schema=schema)
+    def on_register(self, identity):
+        # register a new entry with the user manager
+        fn = user_manager.create(self.schema().dump(identity), key=identity.key)
+        log.info(f"hook result: {fn}")
 
 
 class MessageManager(BaseManager):
     def __init__(self, model=MessageModel, schema=MessageSchema):
         super().__init__(model=model, schema=schema)
 
-    @classmethod
-    def get_conversation_pairs(cls, fk):
-        # [(3, 1), (1, 2)]
-        #   [(1, 2), (2, 1)]
-        #   [(1, 3), (3, 1)]
-        if fk is None:
-            return []
+    def notify(self, message):
+        log.info(f"Notifying for message")
+        # set redis value for notification
+        source = message["source"]
+        target = message["target"]
+        notification = "{}|{}".format(source, target)
+        # include the key in the message
+        message.update(notification=notification)
+        data = json.dumps(message)
+        # TODO: create acknowledgement link
+        return redis.set(notification, data)
+
+    def send(self, data):
+        log.info(f"Sending message")
+        message = self.create(data)
+        # trigger notification
+        self.notify(message)
+        return message
+
+    def get_inbox(self, key, page=PAGINATION_PAGE, size=PAGINATION_SIZE):
+        # https://stackoverflow.com/questions/4378698/return-all-possible-combinations-of-values-on-columns-in-sql
         records = db.engine.execute(
             f"""
-            SELECT t1.src_fk, t1.dst_fk
-            FROM messages t1
-            EXCEPT
-            SELECT t1.src_fk, t1.dst_fk
-            FROM messages t1
-            INNER JOIN messages t2
-            ON t1.src_fk = t2.dst_fk AND t1.dst_fk = t2.src_fk
-            AND t1.src_fk > t1.dst_fk
-            WHERE t1.src_fk = {fk}
-            OR t1.dst_fk = {fk}
-            OR t2.src_fk = {fk}
-            OR t2.dst_fk = {fk};
+            SELECT DISTINCT m.target, m.source FROM messages m
+            WHERE m.target = {key} OR  m.source = {key};
             """.format(
-                fk=fk
+                key=key
             )
         )
-        # FIXME: until we can port this to native query, this blows up at scale
-        return [(a, b) for a, b in records if fk in (a, b)]  # exhaustible iterable
-
-    def get_conversations(self, fk, page=PAGINATION_PAGE, size=PAGINATION_SIZE):
-        log.info(f"Getting conversations: fk={fk} page={page} size={size}")
-        # return the most recent message from each conversation
-        messages = list()
-        for (a, b) in self.get_conversation_pairs(fk=fk):
+        pairs = set([tuple(sorted(record)) for record in records])
+        messages = []
+        for a, b in pairs:
             message = (
-                db.session.query(MessageModel)
+                db.session.query(self.model)
                 .filter(
                     or_(
-                        (MessageModel.src_fk == a) & (MessageModel.dst_fk == b),
-                        (MessageModel.src_fk == b) & (MessageModel.dst_fk == a),
+                        (self.model.source == a) & (self.model.target == b),
+                        (self.model.source == b) & (self.model.target == a),
                     )
                 )
-                .order_by(MessageModel.created_at.desc())
+                .order_by(self.model.created_at.desc())
                 .first()
             )
             messages.append(message)
-        # guarantee sort messages by timestamp
-        messages.sort(key=lambda obj: obj.created_at, reverse=True)
-        total = len(messages)
-        pages = total // size
-        # messages = q.limit(size).offset(page * size)
-        messages = messages[page * size : (page * size) + size]
-        # content = MessageSchema(many=True).dump(messages)
-        content = MessageSchema(many=True).dump(messages)
-        pags = {
+        content = self.schema(many=True).dump(
+            sorted(messages, key=lambda m: m.created_at)
+        )
+        pagination = {
             "content": content,
             "metadata": {
                 "page": page,
                 "size": size,
-                "pages": pages,
-                "total": total,
+                "pages": None,
+                "total": None,
                 "checksum": checksum(content),
             },
         }
-        return pags
+        return pagination
 
-    def get_conversation(
-        self, src_fk, dst_fk, page=PAGINATION_PAGE, size=PAGINATION_SIZE
-    ):
-        log.info(
-            f"Getting conversation: src_fk={src_fk} dst_fk={dst_fk} page={page} size={size}"
-        )
-        # return an ordered message history of one conversation
+    def get_chat(self, source, target, page=PAGINATION_PAGE, size=PAGINATION_SIZE):
         q = (
-            db.session.query(MessageModel)
+            db.session.query(self.model)
             .filter(
                 or_(
-                    ((MessageModel.src_fk == src_fk) & (MessageModel.dst_fk == dst_fk)),
-                    ((MessageModel.src_fk == dst_fk) & (MessageModel.dst_fk == src_fk)),
+                    (self.model.source == source) & (self.model.target == target),
+                    (self.model.source == target) & (self.model.target == source),
                 )
             )
-            .order_by(MessageModel.created_at.desc())
+            .order_by(self.model.created_at.desc())
         )
-        src = user_manager.read(src_fk, exclude=["calendar", "profile", "location"])
-        dst = user_manager.read(dst_fk, exclude=["calendar", "profile", "location"])
         total = q.count()
-        pages = q.count() // size
+        pages = total // size
         messages = q.limit(size).offset(page * size)
-        content = MessageSchema(many=True).dump(messages)
-        pags = {
+        content = self.schema(many=True).dump(messages)
+        pagination = {
             "content": content,
-            "context": {
-                "src": src,
-                "dst": dst,
-            },
             "metadata": {
                 "page": page,
                 "size": size,
@@ -990,108 +941,39 @@ class MessageManager(BaseManager):
                 "checksum": checksum(content),
             },
         }
-        return pags
+        return pagination
 
-    def get_notifications(self, pk) -> int:
-        log.info(f"Getting notifications: pk={pk}")
-        notifications = 0
-        for (a, b) in self.get_conversation_pairs(fk=pk):
-            src_fk = [a, b][a == pk]
-            dst_fk = [a, b][b == pk]
-            notifs = (
-                db.session.query(MessageModel)
-                .filter(
-                    (MessageModel.src_fk == src_fk) & (MessageModel.dst_fk == dst_fk)
-                )
-                .filter_by(read=False)
-                .count()
-            )
-            notifications += 1 if notifs else 0
-        return notifications
+    def notifications(self, key):
+        log.info(f"Getting notifications for: {key}")
+        _, matches = redis.scan(match="*|{}".format(key))
+        return [json.loads(redis.get(match)) for match in matches]
 
-    def mark_read(self, src_fk, dst_fk):
-        log.info(f"Updating chat notifications: src_fk={src_fk} dst_fk={dst_fk}")
-        q = (
-            db.session.query(MessageModel)
-            .filter(((MessageModel.src_fk == dst_fk) & (MessageModel.dst_fk == src_fk)))
-            .filter_by(read=False)
-        )
-        messages = q.all()
-        for message in messages:
-            self.update(pk=message.pk, patches=dict(read=True))
-        return len(messages)
-
-
-class CalendarManager(BaseManager):
-    def __init__(self, model=CalendarModel, schema=CalendarSchema):
-        super().__init__(model=model, schema=schema)
-
-    def query(self, fk, date, days):
-        # TODO: accept bulk updates
-        # set some empty column placeholders for days with no entries.
-        # we typically only have max 28 entries per query (7*4)
-        # which eliminates the need for gymnastics in the ui
-        content = dict.fromkeys(
-            [date + datetime.timedelta(days=d) for d in range(days)], {}
-        )
-        total = 0
-        for key in content.keys():
-            calendars = db.session.query(CalendarModel).filter_by(fk=fk, date=key).all()
-            available = [
-                cal["time"] for cal in CalendarSchema(many=True).dump(calendars)
-            ]
-            total += len(available)
-            # don't use an update here, dumb pass-by-reference thing
-            content[key] = dict(date=dump_date(key), available=available)
-        pags = {
-            "content": list(content.values()),
-            "metadata": {
-                "fk": fk,
-                "date": dump_date(date),
-                "days": days,
-                "total": total,
-            },
-        }
-        return pags
-
-    def set_availability(self, data):
-        available = data.get("available")  # true/false
-        if available:
-            # smart create a new entry
-            return self.create(data)
-        calendar = CalendarSchema().load(data)
-        result = (
-            db.session.query(CalendarModel)
-            .filter_by(fk=calendar.fk, date=calendar.date, time=calendar.time)
-            .first()
-        )
-        if result:
-            return self.delete(result.pk)
+    def acknowledge(self, notification):
+        log.info(f"Acknowledging notification: {notification}")
+        return redis.delete(notification)
 
 
 class UserManager(BaseManager):
     def __init__(self, model=UserModel, schema=UserSchema):
         super().__init__(model=model, schema=schema)
 
-    # @override
-    def create(self, data):
-        user = self.schema().load(data)
-        user.hash_password(user.password)
-        db.session.add(user)
-        db.session.commit()
-        return self.schema().dump(user)
-
-    def query(self, page=PAGINATION_PAGE, size=PAGINATION_SIZE, **kwargs):
-        username = kwargs.get("username")
-
-        q = db.session.query(UserModel).filter(
-            UserModel.username.like("%{}%".format(username))
-        )
+    def query(
+        self, identity=None, page=PAGINATION_PAGE, size=PAGINATION_SIZE, **kwargs
+    ):
+        # if identity is provided, omit from the results
+        # .filter(AuthModel.username.like("%{}%".format(username)))
+        # name/bio
+        # location/distance
+        # handicap
+        # preferences
+        q = db.session.query(UserModel)
+        if identity:
+            q.filter(UserModel.key != identity.key)
         total = q.count()
         pages = total // size
         users = q.limit(size).offset(page * size)
-        content = UserSchema(many=True).dump(users)
-        pags = {
+        content = self.schema(many=True).dump(users)
+        pagination = {
             "content": content,
             "metadata": {
                 "page": page,
@@ -1101,181 +983,115 @@ class UserManager(BaseManager):
                 "checksum": checksum(content),
             },
         }
-        return pags
-
-    def login(self, payload):
-        # creds are posted using json payload
-        provider = UserSchema(
-            only=(
-                "username",
-                "password",
-            )
-        ).load(payload)
-        user = db.session.query(UserModel).filter_by(username=provider.username).first()
-        if not user:
-            return None
-        if not user.verify_password(provider.password):
-            return None
-        session.update(UserSchema().dump(user))
-        return user
-
-    def logout(self, **kwargs):
-        session.clear()
-        return True
+        return pagination
 
 
 class NetworkManager(BaseManager):
     def __init__(self, model=NetworkModel, schema=NetworkSchema):
         super().__init__(model=model, schema=schema)
 
-    def is_reciprocal(self, src_fk, dst_fk):
-        # given a->b, does b->a
-        network = (
-            db.session.query(NetworkModel)
-            .filter_by(src_fk=dst_fk, dst_fk=src_fk)
-            .first()
-        )
-        return bool(network)
-
-    def get_followers(self, pk, page=PAGINATION_PAGE, size=PAGINATION_SIZE):
-        # SRC: others
-        # DST: us
-        q = db.session.query(NetworkModel).filter_by(dst_fk=pk)
-        total = q.count()
-        pages = total // size
-
-        networks = q.limit(size).offset(page * size)
-        content = NetworkSchema(many=True).dump(networks)
-        # FIXME: reciprocity
-        [
-            c["network"].update(reciprocal=self.is_reciprocal(c["src_fk"], c["dst_fk"]))
-            if c.get("network")
-            else c.update(
-                network=dict(reciprocal=self.is_reciprocal(c["src_fk"], c["dst_fk"]))
-            )
-            for c in content
-        ]
-        pags = {
-            "content": content,
-            "metadata": {
-                "page": page,
-                "size": size,
-                "pages": pages,
-                "total": total,
-                "checksum": checksum(content),
-            },
-        }
-        return pags
-
-    def get_following(self, pk, page=PAGINATION_PAGE, size=PAGINATION_SIZE):
-        # SRC: us
-        # DST: others
-        q = db.session.query(NetworkModel).filter_by(src_fk=pk)
-
-        total = q.count()
-        pages = total // size
-
-        networks = q.limit(size).offset(page * size)
-        content = NetworkSchema(many=True).dump(networks)
-        # FIXME: reciprocity
-        [
-            c["network"].update(reciprocal=self.is_reciprocal(c["dst_fk"], c["src_fk"]))
-            if c.get("network")
-            else c.update(
-                network=dict(reciprocal=self.is_reciprocal(c["dst_fk"], c["src_fk"]))
-            )
-            for c in content
-        ]
-        pags = {
-            "content": content,
-            "metadata": {
-                "page": page,
-                "size": size,
-                "pages": pages,
-                "total": total,
-                "checksum": checksum(content),
-            },
-        }
-        return pags
-
-    def follow(self, src_fk, dst_fk):
-        network = (
-            db.session.query(NetworkModel)
-            .filter_by(src_fk=src_fk, dst_fk=dst_fk)
-            .first()
-        )
+    def follow(self, source, target):
+        network = self.lookup(source=source, target=target)
         if network:
-            return NetworkSchema().dump(network)
-        network = NetworkSchema().load(dict(src_fk=src_fk, dst_fk=dst_fk))
-        db.session.add(network)
+            return None
+        return self.create(dict(source=source, target=target))
+
+    def unfollow(self, source, target):
+        network = self.lookup(source=source, target=target)
+        if not network:
+            return None
+        db.session.delete(network)
         db.session.commit()
-        return NetworkSchema().dump(network)
+        return True
 
-    def unfollow(self, src_fk, dst_fk):
-        network = (
-            db.session.query(NetworkModel)
-            .filter_by(src_fk=src_fk, dst_fk=dst_fk)
-            .first()
-        )
-        if network:
-            db.session.delete(network)
-            db.session.commit()
-            return True
-        return False
+    def get_edges(self, source, target):
+        # source & target can be provided in any order
+        edges = [
+            self.lookup(source=source, target=target),
+            self.lookup(source=target, target=source),
+        ]
+        return self.schema(many=True).dump([edge for edge in edges if edge])
+
+    def get_followers(self, key, page=PAGINATION_PAGE, size=PAGINATION_SIZE):
+        q = db.session.query(NetworkModel).filter_by(target=key)
+        total = q.count()
+        pages = total // size
+
+        networks = q.limit(size).offset(page * size)
+        content = NetworkSchema(many=True).dump(networks)
+        # FIXME: reciprocity
+        pags = {
+            "content": content,
+            "metadata": {
+                "page": page,
+                "size": size,
+                "pages": pages,
+                "total": total,
+                "checksum": checksum(content),
+            },
+        }
+        return pags
+
+    def get_following(self, key, page=PAGINATION_PAGE, size=PAGINATION_SIZE):
+        q = db.session.query(NetworkModel).filter_by(source=key)
+
+        total = q.count()
+        pages = total // size
+
+        networks = q.limit(size).offset(page * size)
+        content = NetworkSchema(many=True).dump(networks)
+        # FIXME: reciprocity
+        pags = {
+            "content": content,
+            "metadata": {
+                "page": page,
+                "size": size,
+                "pages": pages,
+                "total": total,
+                "checksum": checksum(content),
+            },
+        }
+        return pags
 
 
-class QueryManager(BaseManager):
-    def __init__(self, model=None, schema=None):
+class CalendarManager(BaseManager):
+    def __init__(self, model=CalendarModel, schema=CalendarSchema):
         super().__init__(model=model, schema=schema)
 
-    def query(self, page=PAGINATION_PAGE, size=PAGINATION_SIZE, **kwargs):
-        # query multiple managers to grab the coresponding `users` pk's,
-        # then do a bulk query & merge these results.
+    def entry(self, data):
+        this = self.schema().load(data)
+        cursor = (
+            db.session.query(CalendarModel)
+            .filter_by(source=this.source, date=this.date, slot=this.slot)
+            .first()
+        )
+        # create
+        if this.available:
+            if cursor:
+                return True
+            db.session.add(this)
+            db.session.commit()
+            return True
+        # delete
+        else:
+            if cursor:
+                db.session.delete(cursor)
+                return False
+            # nothing to do
+            return False
 
-        # submodule queries should register parsers here and be able to
-        # play nicely with unknown values. subqueries all run and we rank results
-        user_query_params = dict(username=kwargs.get("username"))
-        profile_query_params = dict(alias=kwargs.get("alias"))
-        # ...
+    def query(self, *args, **kwargs):
+        pass
 
-        users = user_manager.query(page=page, size=size, **user_query_params)
-        profiles = profile_manager.query(page=page, size=size, **profile_query_params)
-        # ...
 
-        pks = list()
-        pks.extend([obj["pk"] for obj in users["content"]])
-        pks.extend([obj["fk"] for obj in profiles["content"]])
-        # ...
-
-        records = user_manager.bulk_read(pk=pks)
-        # TODO: rank
-        total = len(records)
-        pages = total // size
-        content = records[page * size : (page * size) + size]
-
-        pags = {
-            "content": content,
-            "metadata": {
-                "page": page,
-                "pages": pages,
-                "size": size,
-                "total": total,
-                "checksum": checksum(content),
-                "links": {},
-            },
-        }
-        return pags
+auth_manager = AuthManager()
+user_manager = UserManager()
+network_manager = NetworkManager()
+message_manager = MessageManager()
+calendar_manager = CalendarManager()
 
 
 ### SERVICES ###
-# ----------------------------------- #
-# @app.errorhandler(Exception)
-# def error(e):
-#     if e.code != 404:
-#         print(traceback.format_exc())
-#     return Reply.error(error=e.__class__.__qualname__)
-
-
 # ----------------------------------- #
 @bp.route("/", methods=["GET"])
 def index():
@@ -1300,557 +1116,209 @@ def index():
 # ----------------------------------- #
 @bp.route("/auth/register", methods=["POST"])
 def auth_register():
-    user = user_manager.create(request.get_json())
-    return issue_token()
+    return Reply.success(data=auth_manager.register(request.get_json()))
 
 
 @bp.route("/auth/login", methods=["POST"])
-def issue_token():
-    subject = user_manager.login(request.get_json())
-    if not subject:
-        return Reply.unauthorized(error="Unauthorized")
-    pk = UserSchema().dump(subject).get("pk")
-    return Reply.success(data=dict(pk=pk, token=auth_manager.issue_token(subject=pk)))
+def auth_token():
+    return Reply.success(data=auth_manager.login(request.get_json()))
 
 
 @bp.route("/auth/logout", methods=["POST"])
-def revoke_token():
-    return Reply.success(data=user_manager.logout())
+@auth_manager.protect
+def auth_logout(identity):
+    return Reply.success(data=auth_manager.logout(identity))
 
 
-@bp.route("/auth/validate", methods=["POST"])
-def validate_token():
-    token = auth_parser.parse_args().get("token")
-    if auth_manager.check_token(token):
-        return Reply.success(data=True)
-    return Reply.unauthorized(data=False, error="Unauthorized")
+@bp.route("/auth/renew", methods=["POST"])
+@auth_manager.protect
+def auth_renew(identity):
+    return Reply.success(data=auth_manager.renew(identity))
 
 
-# ----------------------------------- #
-@bp.route("/events", methods=["POST"])
-@authenticated()
-def create_event():
-    return Reply.success(data=event_manager.create(request.get_json()))
+@bp.route("/auth/identity/<int:key>", methods=["GET"])
+@auth_manager.protect
+def auth_read(identity, key):
+    RBAC(identity, key)
+    return Reply.success(data=auth_manager.read(key=key))
 
 
-@bp.route("/events/<int:pk>", methods=["GET"])
-@authenticated()
-def read_event(pk):
-    return Reply.success(data=event_manager.read(pk))
-
-
-@bp.route("/events/<int:pk>", methods=["PATCH"])
-@authenticated()
-def update_event(pk):
-    return Reply.success(data=event_manager.update(pk, request.get_json()))
-
-
-@bp.route("/events/<int:pk>", methods=["DELETE"])
-@authenticated()
-def delete_event(pk):
-    return Reply.success(data=event_manager.delete(pk))
-
-
-@bp.route("/events/query", methods=["POST"])
-@authenticated()
-def query_events():
-    pags = pagination_parser.parse_args()
-    return Reply.success(data=event_manager.query(params=request.get_json(), **pags))
+@bp.route("/auth/identity/<int:key>", methods=["PATCH"])
+@auth_manager.protect
+def auth_update(identity, key):
+    RBAC(identity, key)
+    return Reply.success(data=auth_manager.update(request.get_json(), key=key))
 
 
 # ----------------------------------- #
-@bp.route("/users", methods=["POST"])
-@authenticated()
-def create_user():
-    return Reply.success(data=user_manager.create(request.get_json()))
+@bp.route("/user/<int:key>", methods=["POST"])
+@auth_manager.protect
+def user_create(identity, key):
+    RBAC(identity, key)
+    return Reply.success(data=user_manager.create(request.get_json(), key=key))
 
 
-@bp.route("/users/<int:pk>", methods=["GET"])
-@authenticated()
-def read_user(pk):
-    return Reply.success(data=user_manager.read(pk))
+@bp.route("/user/<int:key>", methods=["GET"])
+@auth_manager.protect
+def user_read(identity, key):
+    RBAC(identity, key)
+    return Reply.success(data=user_manager.read(key))
 
 
-@bp.route("/users/<int:pk>", methods=["PATCH"])
-@authenticated()
-def update_user(pk):
-    return Reply.success(data=user_manager.update(pk, request.get_json()))
+@bp.route("/user/<int:key>", methods=["PATCH"])
+@auth_manager.protect
+def user_update(identity, key):
+    RBAC(identity, key)
+    return Reply.success(data=user_manager.update(key, request.get_json()))
 
 
-@bp.route("/users/<int:pk>", methods=["DELETE"])
-@authenticated()
-def delete_user(pk):
-    return Reply.success(data=user_manager.delete(pk))
+@bp.route("/user/<int:key>", methods=["DELETE"])
+@auth_manager.protect
+def user_delete(identity, key):
+    RBAC(identity, key)
+    return Reply.success(data=user_manager.delete(key))
 
 
-@bp.route("/users/query", methods=["POST"])
-@authenticated()
-def query_users():
-    pags = pagination_parser.parse_args()
-    return Reply.success(data=user_manager.query(**request.get_json(), **pags))
-
-
-# ----------------------------------- #
-@bp.route("/profiles", methods=["POST"])
-@authenticated()
-def create_profile():
-    return Reply.success(data=profile_manager.create(request.get_json()))
-
-
-@bp.route("/profiles/<int:pk>", methods=["GET"])
-@authenticated()
-def read_profile(pk):
-    return Reply.success(data=profile_manager.read(pk))
-
-
-@bp.route("/profiles/<int:pk>", methods=["PATCH"])
-@authenticated()
-def update_profile(pk):
-    return Reply.success(data=profile_manager.update(pk, request.get_json()))
-
-
-@bp.route("/profiles/<int:pk>", methods=["DELETE"])
-@authenticated()
-def delete_profile(pk):
-    return Reply.success(data=profile_manager.delete(pk))
-
-
-# ----------------------------------- #
-@bp.route("/locations", methods=["POST"])
-@authenticated()
-def create_location():
-    return Reply.success(data=location_manager.create(request.get_json()))
-
-
-@bp.route("/locations/<int:pk>", methods=["GET"])
-@authenticated()
-def read_location(pk):
-    return Reply.success(data=location_manager.read(pk))
-
-
-@bp.route("/locations/<int:pk>", methods=["PATCH"])
-@authenticated()
-def update_location(pk):
-    return Reply.success(data=location_manager.update(pk, request.get_json()))
-
-
-@bp.route("/locations/<int:pk>", methods=["DELETE"])
-@authenticated()
-def delete_location(pk):
-    return Reply.success(data=location_manager.delete(pk))
-
-
-@bp.route("/locations/query", methods=["POST"])
-@authenticated()
-def query_locations():
-    pags = pagination_parser.parse_args()
-    locs = location_parser.parse_args()
-    return Reply.success(data=location_manager.query(**locs, **pags))
-
-
-# ----------------------------------- #
-@bp.route("/messages", methods=["POST"])
-@authenticated()
-def create_message():
-    return Reply.success(data=message_manager.create(request.get_json()))
-
-
-@bp.route("/messages/<int:pk>", methods=["GET"])
-@authenticated()
-def read_message(pk):
-    return Reply.success(data=message_manager.read(pk))
-
-
-@bp.route("/messages/<int:pk>", methods=["PATCH"])
-@authenticated()
-def update_message(pk):
-    return Reply.success(data=message_manager.update(pk, request.get_json()))
-
-
-@bp.route("/messages/<int:pk>", methods=["DELETE"])
-@authenticated()
-def delete_message(pk):
-    return Reply.success(data=message_manager.delete(pk))
-
-
-# ----------------------------------- #
-@bp.route("/conversations/<int:pk>", methods=["GET"])
-@authenticated()
-def get_conversations(pk):
-    pags = pagination_parser.parse_args()
-    return Reply.success(data=message_manager.get_conversations(pk, **pags))
-
-
-@bp.route("/conversations/<int:src_fk>/<int:dst_fk>", methods=["GET"])
-@authenticated()
-def get_conversation(src_fk, dst_fk):
-    pags = pagination_parser.parse_args()
-    return Reply.success(data=message_manager.get_conversation(src_fk, dst_fk, **pags))
-
-
-@bp.route("/chat/read/<int:src_fk>/<int:dst_fk>", methods=["POST"])
-@authenticated()
-def mark_read(src_fk, dst_fk):
-    return Reply.success(data=message_manager.mark_read(src_fk, dst_fk))
-
-
-# ----------------------------------- #
-@bp.route("/notifications/<int:pk>", methods=["GET"])
-@authenticated()
-def get_notifications(pk):
-    return Reply.success(data=message_manager.get_notifications(pk))
-
-
-# ----------------------------------- #
-@bp.route("/images", methods=["POST"])
-@authenticated()
-def create_image():
-    return Reply.success(data=image_manager.create(request.get_json()))
-
-
-@bp.route("/images/<int:pk>", methods=["GET"])
-@authenticated()
-def read_image(pk):
-    return Reply.success(data=image_manager.read(pk=pk))
-
-
-@bp.route("/images/<int:pk>", methods=["PATCH"])
-@authenticated()
-def update_image(pk):
-    return Reply.success(data=image_manager.update(pk, request.get_json()))
-
-
-@bp.route("/images/<int:pk>", methods=["DELETE"])
-@authenticated()
-def delete_image(pk):
-    return Reply.success(data=image_manager.delete(pk))
-
-
-@bp.route("/images/img/<int:pk>", methods=["GET"])
-def serve_image(pk):
-    return Reply.plain(
-        data=base64.b64decode(image_manager.read(pk=pk).get("img")), dtype="image/png"
+@bp.route("/user/query", methods=["POST"])
+@auth_manager.protect
+def user_query(identity):
+    pagination = pagination_parser.parse_args()
+    return Reply.success(
+        data=user_manager.query(identity=identity, **request.get_json(), **pagination)
     )
 
 
 # ----------------------------------- #
-@bp.route("/calendar", methods=["POST"])
-@authenticated()
-def create_calendar():
-    return Reply.success(data=calendar_manager.create(request.get_json()))
+@bp.route("/message/send", methods=["POST"])
+@auth_manager.protect
+def message_send(identity):
+    # TODO: validate sender from request model
+    return Reply.success(data=message_manager.send(request.get_json()))
 
 
-@bp.route("/calendar/<int:pk>", methods=["GET"])
-@authenticated()
-def read_calendar(pk):
-    return Reply.success(data=calendar_manager.read(pk))
+@bp.route("/message/inbox/<int:key>", methods=["GET"])
+@auth_manager.protect
+def message_inbox(identity, key):
+    RBAC(identity, key)
+    pagination = pagination_parser.parse_args()
+    return Reply.success(data=message_manager.get_inbox(key, **pagination))
 
 
-@bp.route("/calendar/<int:pk>", methods=["PATCH"])
-@authenticated()
-def update_calendar(pk):
-    return Reply.success(data=calendar_manager.update(pk, request.get_json()))
+@bp.route("/message/chat/<int:source>/<int:target>", methods=["GET"])
+@auth_manager.protect
+def message_chat(identity, source, target):
+    RBAC(identity, source)
+    pagination = pagination_parser.parse_args()
+    return Reply.success(data=message_manager.get_chat(source, target, **pagination))
 
 
-@bp.route("/calendar/<int:pk>", methods=["DELETE"])
-@authenticated()
-def delete_calendar(pk):
-    return Reply.success(data=calendar_manager.delete(pk))
+@bp.route("/message/notifications/<int:key>", methods=["GET"])
+@auth_manager.protect
+def message_notifications(identity, key):
+    RBAC(identity, key)
+    return Reply.success(data=message_manager.notifications(key))
 
 
-@bp.route("/calendar/query", methods=["POST"])
-@authenticated()
-def query_calendar():
-    kwargs = calendar_parser.parse_args()
-    return Reply.success(data=calendar_manager.query(**kwargs))
-
-
-@bp.route("/calendar/availability", methods=["POST"])
-@authenticated()
-def set_availability():
-    return Reply.success(data=calendar_manager.set_availability(request.get_json()))
-
-
-# ----------------------------------- #
-@bp.route("/search/query", methods=["POST"])
-@authenticated()
-def search_query():
-    pags = pagination_parser.parse_args()
-    return Reply.success(data=query_manager.query(**request.get_json(), **pags))
+@bp.route("/message/acknowledge/<int:key>/<notification>", methods=["POST"])
+@auth_manager.protect
+def message_acknowledge(identity, key, notification):
+    RBAC(identity, key)
+    return Reply.success(data=message_manager.acknowledge(notification))
 
 
 # ----------------------------------- #
-@bp.route("/network", methods=["POST"])
-@authenticated()
-def create_network():
-    # TODO: fail if exists
-    return Reply.success(data=network_manager.create(request.get_json()))
+@bp.route("/network/follow/<int:source>/<int:target>", methods=["POST"])
+@auth_manager.protect
+def network_follow(identity, source, target):
+    RBAC(identity, source)
+    return Reply.success(data=network_manager.follow(source, target))
 
 
-@bp.route("/network/<int:pk>", methods=["GET"])
-@authenticated()
-def read_network(pk):
-    return Reply.success(data=network_manager.read(pk))
+@bp.route("/network/unfollow/<int:source>/<int:target>", methods=["POST"])
+@auth_manager.protect
+def network_unfollow(identity, source, target):
+    RBAC(identity, source)
+    return Reply.success(data=network_manager.unfollow(source, target))
 
 
-@bp.route("/network/<int:pk>", methods=["PATCH"])
-@authenticated()
-def update_network(pk):
-    return Reply.success(data=network_manager.update(pk, request.get_json()))
+@bp.route("/network/followers/<int:key>", methods=["GET"])
+@auth_manager.protect
+def network_followers(identity, key):
+    pagination = pagination_parser.parse_args()
+    return Reply.success(data=network_manager.get_followers(key, **pagination))
 
 
-@bp.route("/network/<int:pk>", methods=["DELETE"])
-@authenticated()
-def delete_network(pk):
-    return Reply.success(data=network_manager.delete(pk))
+@bp.route("/network/following/<int:key>", methods=["GET"])
+@auth_manager.protect
+def network_following(identity, key):
+    pagination = pagination_parser.parse_args()
+    return Reply.success(data=network_manager.get_following(key, **pagination))
 
 
-@bp.route("/network/follow", methods=["POST"])
-@authenticated()
-def follow():
-    return Reply.success(data=network_manager.follow(**request.get_json()))
-
-
-@bp.route("/network/unfollow", methods=["POST"])
-@authenticated()
-def unfollow():
-    return Reply.success(data=network_manager.unfollow(**request.get_json()))
-
-
-@bp.route("/network/followers/<int:pk>", methods=["POST"])
-@authenticated()
-def network_followers(pk):
-    pags = pagination_parser.parse_args()
-    return Reply.success(data=network_manager.get_followers(pk, **pags))
-
-
-@bp.route("/network/following/<int:pk>", methods=["POST"])
-@authenticated()
-def network_following(pk):
-    return Reply.success(data=network_manager.get_following(pk))
+@bp.route("/network/edges/<int:source>/<int:target>", methods=["GET"])
+@auth_manager.protect
+def network_edges(identity, source, target):
+    return Reply.success(data=network_manager.get_edges(source, target))
 
 
 # ----------------------------------- #
-@bp.route("/hash/<int:pk>")
-def hash_route(pk):
-    return Reply.success(data=dict(pk=pk, type=str(type(pk))))
+@bp.route("/calendar/<int:key>", methods=["POST"])
+@auth_manager.protect
+def calendar_entry(identity, key):
+    RBAC(identity, key)
+    return Reply.success(calendar_manager.entry(request.get_json()))
+
+
+@bp.route("/calendar/<int:key>", methods=["GET"])
+@auth_manager.protect
+def calendar_query(identity, key):
+    return Reply.success(data=calendar_manager.query(request.get_json()))
+
+
+def mock_factory(app):
+    log.warning(f"Loading mock data")
+    with app.app_context() as ctx:
+        auth1 = auth_manager.register(vars(CREDS1), key=CREDS1.KEY)
+        auth2 = auth_manager.register(vars(CREDS2), key=CREDS2.KEY)
+
+        for i in range(100):
+            try:
+                message_manager.send(
+                    dict(
+                        source=random.randint(1, 10),
+                        target=random.randint(1, 10),
+                        body=uuidstamp(),
+                    )
+                )
+            except Exception as error:
+                pass
+
+    # key, token
+    return auth1
 
 
 # ----------------------------------- #
 if __name__ == "__main__":
     tic = datetime.datetime.now()
+    app = app_factory(environment="develop")
+
     here = os.path.dirname(os.path.abspath(__file__))
     data = os.path.join(os.path.dirname(here), "data")
 
-    dictConfig(
-        {
-            "version": 1,
-            "formatters": {
-                "default": {
-                    "format": "%(asctime)s - %(levelname)s - %(message)s",
-                    "datefmt": "%Y-%m-%d %H:%M:%S",
-                }
-            },
-            "handlers": {
-                "console": {
-                    "level": "INFO",
-                    "class": "logging.StreamHandler",
-                    "formatter": "default",
-                    "stream": "ext://sys.stdout",
-                },
-                "file": {
-                    "level": "DEBUG",
-                    "class": "logging.handlers.RotatingFileHandler",
-                    "formatter": "default",
-                    "filename": "/dev/null",
-                    "maxBytes": 1024,
-                    "backupCount": 3,
-                },
-            },
-            "loggers": {"": {"level": "DEBUG", "handlers": ["console", "file"]}},
-            "disable_existing_loggers": False,
-        }
-    )
-    app = app_factory(environment="develop")
-
-    hashids.init_app(app)
-    auth_manager = AuthManager()
-    user_manager = UserManager()
-    profile_manager = ProfileManager()
-    location_manager = LocationManager()
-    event_manager = EventManager()
-    message_manager = MessageManager()
-    image_manager = ImageManager()
-    calendar_manager = CalendarManager()
-    network_manager = NetworkManager()
-    query_manager = QueryManager()
-
     RESET = True
-    N = 5
+    MOCK = True
 
     with app.app_context() as ctx:
         if RESET:
             db.drop_all()
             db.create_all()
-
-            if N > 0:
-                # USERS
-                with open(os.path.join(data, "users.json"), "r") as file:
-                    users = json.load(file)
-                    users = users[:N]
-                for i, user in tqdm(
-                    enumerate(users), total=len(users), desc="Loading users"
-                ):
-                    trans = UserModel(**user)
-                    db.session.add(trans)
-                    db.session.commit()
-                # pprint(user_manager.read(pk=1))
-
-                # PROFILES
-                with open(os.path.join(data, "profiles.json"), "r") as file:
-                    profiles = json.load(file)
-                    profiles = profiles[:N]
-                for i, profile in tqdm(
-                    enumerate(profiles), total=len(profiles), desc="Loading profiles"
-                ):
-                    trans = ProfileModel(**profile)
-                    db.session.add(trans)
-                    db.session.commit()
-                # pprint(profile_manager.read(pk=1))
-
-                # MESSAGES
-                with open(os.path.join(data, "messages.json"), "r") as file:
-                    messages = json.load(file)
-                for i, message in tqdm(
-                    enumerate(messages), total=len(messages), desc="Loading messages"
-                ):
-                    src_fk, dst_fk = random.sample(range(1, N + 1), 2)
-                    message.update(src_fk=src_fk, dst_fk=dst_fk)
-                    trans = MessageModel(**message)
-                    db.session.add(trans)
-                    db.session.commit()
-                # pprint(message_manager.read(pk=1))
-
-                # IMAGES
-                for i in tqdm(range(N), desc="Loading images"):
-                    array = np.stack(
-                        [np.full((300, 300), random.randint(0, 255)) for _ in range(3)],
-                        axis=2,
-                    )
-                    img = Image.fromarray(array.astype("uint8"))
-                    # im.show()
-                    buffer = BytesIO()
-                    img.save(buffer, format="PNG")
-                    myimage = buffer.getvalue()
-                    image = dict(
-                        fk=i + 1, img=base64.b64encode(myimage).decode("utf-8")
-                    )
-                    trans = ImageModel(**image)
-                    db.session.add(trans)
-                    db.session.commit()
-
-                # LOCATIONS
-                with open(os.path.join(data, "locations.json"), "r") as file:
-                    locations = json.load(file)
-                    locations = locations[:N]
-                for i, location in tqdm(
-                    enumerate(locations), total=len(locations), desc="Loading locations"
-                ):
-                    lon, lat = location["geometry"]["coordinates"]
-                    point = f"POINT({lon} {lat})"
-                    label = random.choice(
-                        [
-                            "Small town",
-                            "Big city",
-                            "Metro region",
-                            "Back country",
-                            "Coastline",
-                        ]
-                    )
-                    location.update(geometry=point, label=label)
-                    trans = LocationModel(**location)
-                    db.session.add(trans)
-                    db.session.commit()
-                # pprint(location_manager.read(pk=1))
-
-                # NETWORKS
-                networks = list()
-                for a, b in tqdm(
-                    itertools.combinations(range(1, N + 1), 2),
-                    total=int(
-                        # n choose k
-                        math.factorial(N)
-                        / (math.factorial(N - 2) * math.factorial(2))
-                    ),
-                    desc="Loading networks:",
-                ):
-                    outcome = random.randint(0, 3)
-                    if outcome == 3:
-                        # dual connection
-                        data = dict(
-                            src_fk=a,
-                            dst_fk=b,
-                        )
-                        network = network_manager.create(data)
-                        networks.append(network)
-                        data = dict(
-                            src_fk=b,
-                            dst_fk=a,
-                        )
-                        network = network_manager.create(data)
-                        networks.append(network)
-                    elif outcome == 2:
-                        # ltr
-                        data = dict(
-                            src_fk=a,
-                            dst_fk=b,
-                        )
-                        network = network_manager.create(data)
-                        networks.append(network)
-                    elif outcome == 1:
-                        # rtl
-                        data = dict(
-                            src_fk=b,
-                            dst_fk=a,
-                        )
-                        network = network_manager.create(data)
-                        networks.append(network)
-                    else:
-                        pass
-
-                # CALENDARS
-                calendars = list()
-                for i in tqdm(range(1, N + 1), desc="Loading calendars:"):
-                    today = load_date(dump_date(datetime.datetime.now()))
-                    for d in range(7):
-                        # do sample
-                        outcome = random.choice([0, 1, 2, 3])
-                        if outcome:
-                            calendar = calendar_manager.create(
-                                dict(date=dump_date(today), time=outcome, fk=i)
-                            )
-                            calendars.append(calendar)
-                        today += datetime.timedelta(days=1)
-
-        else:
-            db.create_all()
-
-        print("Users:", db.session.query(UserModel).count())
-        # pprint(UserSchema(many=True).dump(db.session.query(UserModel).all()))
-        print("Profiles:", db.session.query(ProfileModel).count())
-        # pprint(ProfileSchema(many=True).dump(db.session.query(ProfileModel).all()))
-        print("Messages:", db.session.query(MessageModel).count())
-        # pprint(MessageSchema(many=True).dump(db.session.query(MessageModel).all()))
-        print("Locations:", db.session.query(LocationModel).count())
-        # pprint(LocationSchema(many=True).dump(db.session.query(LocationModel).all()))
-        print("Networks:", db.session.query(NetworkModel).count())
-        # pprint(NetworkSchema(many=True).dump(db.session.query(NetworkModel).all()))
-        print("Calendars:", db.session.query(CalendarModel).count())
+        if MOCK:
+            auth = mock_factory(app)
+            print(f"---Token Authentication---\n{auth}")
 
         toc = datetime.datetime.now()
         print(f"Startup Time: {toc - tic}")
 
-    log.info(f"Hashid (1): {hashids.encode(1)}")
     # interactive mode
     if bool(getattr(sys, "ps1", sys.flags.interactive)):
         log.warning("🟢 Interactive Mode")

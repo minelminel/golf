@@ -16,6 +16,16 @@ services:
     volumes: 
       # - db:/var/lib/postgresql/data
       - ./db:/db
+
+  ### cache ###
+  redis:
+    image: redis
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - '6379:6379'
   
   ### broker ###
   # mq:
